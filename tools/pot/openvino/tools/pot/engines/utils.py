@@ -138,12 +138,15 @@ def align_stat_names_with_results(result_names, nodes_name, output2node, stats_l
     """
     if output2node:
         for original_out_name in nodes_name:
-            if original_out_name not in result_names and (original_out_name, 0) not in stats_layout:
+            converted_out_name = convert_output_key(original_out_name)
+            if (
+                converted_out_name not in result_names
+                and (original_out_name in stats_layout or converted_out_name in stats_layout)
+            ):
                 out_name_with_port = original_out_name + '.0'
                 assert out_name_with_port in result_names
                 update_stats(stats_layout, stat_aliases, original_out_name, out_name_with_port)
                 output2node[out_name_with_port] = original_out_name
-
 
 def process_raw_output(raw_output):
     """ Process raw output into the POT friendly format """

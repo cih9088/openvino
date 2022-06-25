@@ -90,7 +90,7 @@ class MinMaxQuantization(Algorithm):
          key and dictionary with statistics {stats_name: stats_fn} as values
         """
 
-        fq_nodes = mu.get_nodes_by_type(model, ['FakeQuantize'])
+        fq_nodes = mu.get_nodes_by_type(model, ['FakeQuantize'], recursively=True)
 
         statistics_layout = {}
         for fq in fq_nodes:
@@ -121,7 +121,7 @@ class MinMaxQuantization(Algorithm):
 
         batch_inputs_stats = dict()
         batch_weights_stats = dict()
-        fake_quantizations = mu.get_nodes_by_type(model, ['FakeQuantize'])
+        fake_quantizations = mu.get_nodes_by_type(model, ['FakeQuantize'], recursively=True)
 
         for fq in fake_quantizations:
             fq_input = fqut.get_fake_quantize_input(fq)

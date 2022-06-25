@@ -13,7 +13,8 @@ from ...graph.model_utils import get_nodes_by_type, get_node_by_name
 from ...graph.node_utils import get_node_input, set_node_value, \
     get_node_value, get_node_output, get_node_inputs, get_input_shape, \
     get_quantized_input_key, get_input_data_value, get_first_convolutions
-from ...graph.special_operations import OPERATIONS_WITH_WEIGHTS, TRANSPOSED_OPERATIONS
+from ...graph.special_operations import OPERATIONS_WITH_WEIGHTS, TRANSPOSED_OPERATIONS, \
+    RECURRENT_OPERATIONS
 from ...graph.transformer import GraphTransformer
 from ...utils.logger import get_logger
 
@@ -126,7 +127,7 @@ def compute_stats_layouts(config, model, qscheme=None):
     change_configurations_by_model_type(model, config, fq_configuration, hardware_config)
 
     # get all fake quantize nodes
-    fq_nodes = get_nodes_by_type(model, ['FakeQuantize'])
+    fq_nodes = get_nodes_by_type(model, ['FakeQuantize'], recursively=True)
 
     fake_quantize_config = {}
     for fq in fq_nodes:
@@ -320,9 +321,38 @@ def get_quantized_model(model, create_stats_collector, activations_statistics,
     # compute weights statistics
     weights_stats = compute_weights_stats(model, weights_stats_layout)
 
+    aggregate_recurrent_stats(model, activations_statistics)
+
     # calculate and fill min and max range for fq nodes
     fill_fq_range(model, weights_stats, activations_statistics, fake_quantize_config, config)
     return model
+
+
+def aggregate_recurrent_stats(model, activations_statistics):
+    """ Aggregate input and hidden state statistics to have equal FQ constants
+    (required by oneDNN library)
+    """
+
+    recurrent_nodes = get_nodes_by_type(
+        model, [op['type'] for op in RECURRENT_OPERATIONS], recursively=True
+    )
+    for recurrent_node in recurrent_nodes:
+        input_node = get_node_input(recurrent_node, 0)
+        while input_node.fullname not in activations_statistics:
+            input_node = get_node_input(input_node, 0)
+        hidden_state_node = get_node_input(recurrent_node, 1)
+        while hidden_state_node.fullname not in activations_statistics:
+            hidden_state_node = get_node_input(hidden_state_node, 0)
+
+        input_activations_statistics = activations_statistics[input_node.fullname]
+        hidden_activations_statistics = activations_statistics[hidden_state_node.fullname]
+        assert input_activations_statistics.keys() == hidden_activations_statistics.keys()
+
+        for key in input_activations_statistics.keys():
+            i = [i for i in input_activations_statistics[key]]
+            h = [h for h in hidden_activations_statistics[key]]
+            input_activations_statistics[key].extend(h)
+            hidden_activations_statistics[key].extend(i)
 
 
 def compute_weights_stats(model, stats_layout):
@@ -334,7 +364,7 @@ def compute_weights_stats(model, stats_layout):
     # compute weights statistics
     weights_stats = {}
     for fq_name, stats in stats_layout.items():
-        fq_node = get_node_by_name(model, fq_name)
+        fq_node = get_node_by_name(model, fq_name, recursively=True)
         if fq_node.type != 'FakeQuantize':
             raise Exception('FakeQuantize node for weights is missed')
         node = get_fake_quantize_first_output(fq_node)
@@ -347,7 +377,21 @@ def compute_weights_stats(model, stats_layout):
             weights_stats[node.fullname] = {}
         for stat_name, stat_fn in stats.items():
             weights = weights_value.astype(np.float32)
-            weights_stats[node.fullname][stat_name] = stat_fn(weights)
+            if stat_name in weights_stats[node.fullname]:
+                # weight and recurrent weight should have equal FQ constants
+                # (required by oneDNN library)
+                assert node.type in [op['type'] for op in RECURRENT_OPERATIONS]
+                weights_stats[node.fullname][stat_name] = stat_fn(
+                    np.concatenate(
+                        (
+                            np.expand_dims(weights_stats[node.fullname][stat_name], 1),
+                            np.expand_dims(stat_fn(weights), 1)
+                        ),
+                        1
+                    )
+                )
+            else:
+                weights_stats[node.fullname][stat_name] = stat_fn(weights)
     return weights_stats
 
 

@@ -355,7 +355,7 @@ def find_fqs_to_unify(model, config):
     fqs_to_unify = []
     if model is None:
         return fqs_to_unify
-    for fq in get_nodes_by_type(model, ['FakeQuantize']):
+    for fq in get_nodes_by_type(model, ['FakeQuantize'], recursively=True):
         if not visited[fq.fullname] and get_node_input(fq, 0).type != 'Const':
             stack = [fq]
             to_unify = [[], []]
@@ -412,7 +412,7 @@ def _fake_quantize_to_types(model, hardware_config):
 
     out = {}
     available_types = [layer['type'] for layer in hardware_config]
-    for fq in get_nodes_by_type(model, ['FakeQuantize']):
+    for fq in get_nodes_by_type(model, ['FakeQuantize'], recursively=True):
         node_input = get_node_input(fq, 0)
         out[fq.fullname] = (_get_node_valuable_descendant(fq), node_input.type == 'Const')
 

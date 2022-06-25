@@ -4,6 +4,7 @@
 import networkx as nx
 from openvino.tools.mo.graph.graph import Node
 from openvino.tools.mo.middle.passes.infer import type_infer
+from openvino.tools.mo.middle.pattern_match import for_graph_and_each_sub_graph_recursively
 
 from . import editor as ge, builder as gb
 from .nx_model import CompressedModel
@@ -55,7 +56,7 @@ def add_outputs(models, node_names):
 def compress_model_weights(model: CompressedModel):
     """Apply transformations to save model weights to INT8."""
     for model_dict in model.models:
-        compress_weights(model_dict['model'])
+        for_graph_and_each_sub_graph_recursively(model_dict['model'], compress_weights)
 
 
 # TODO: set recursively = True to enable subgraphs quantization
@@ -71,13 +72,15 @@ def get_nodes_by_type(model: CompressedModel, types: list, recursively: bool = F
             for node in ge.get_nodes_by_type(model_dict['model'], types, recursively)]
 
 
-def get_node_by_name(model: CompressedModel, name: str) -> Node:
+def get_node_by_name(model: CompressedModel, name: str, recursively: bool = False) -> Node:
     """ Returns node by name found in the graph and each subgraph
     :param model: CompressedModel model
     :param name: name of the node
+    :param recursively: whether return all nodes from the model
+    and each subgraph or only from the external model
     :return node from model (of type Node or None if there's no such node)
     """
-    names = [ge.get_node_by_name(model_dict['model'], name)
+    names = [ge.get_node_by_name(model_dict['model'], name, recursively=recursively)
              for model_dict in model.models]
     names = [name for name in names if name is not None]
     if len(names) > 1:

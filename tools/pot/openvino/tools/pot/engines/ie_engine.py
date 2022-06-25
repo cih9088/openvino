@@ -36,7 +36,7 @@ class IEEngine(Engine):
         self._tmp_dir = create_tmp_dir()
         self._device = self.config.device
 
-    def set_model(self, model):
+    def set_model(self, model, filter_layers_func=None):
         """ Loads NetworkX model into InferenceEngine and stores it in Engine class
         :param model: CompressedModel instance
         """
@@ -45,7 +45,12 @@ class IEEngine(Engine):
 
         # save NetworkX graph to IR and use it to initialize IE Network
         self._model = self._set_model(model)[0]['model']
-        self._output_layers = [get_clean_name(output.get_node().friendly_name) for output in self._model.outputs]
+
+        self._output_layers = []
+        for output in self._model.outputs:
+            name = get_clean_name(output.get_node().friendly_name)
+            if not filter_layers_func or (filter_layers_func and filter_layers_func(name)):
+                self._output_layers.append(name)
 
     def _set_model(self, model):
         """Creates IENetwork instances from NetworkX models in CompressedModel.
@@ -97,7 +102,7 @@ class IEEngine(Engine):
             model_with_stat_op, nodes_names_map, output_to_node_names = self._statistic_graph_builder.\
                 insert_statistic(copy.deepcopy(self._nx_model),
                                  stats_layout, stat_aliases)
-            self.set_model(model_with_stat_op)
+            self.set_model(model_with_stat_op, lambda name: name not in output_to_node_names)
             nodes_names_map = nodes_names_map[self._model.friendly_name]
             nodes_name = list(nodes_names_map.keys())
             cast_friendly_names(self._model.outputs)
