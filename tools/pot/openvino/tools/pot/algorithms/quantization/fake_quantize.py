@@ -337,9 +337,17 @@ def aggregate_recurrent_stats(model, activations_statistics):
         model, [op['type'] for op in RECURRENT_OPERATIONS], recursively=True
     )
     for recurrent_node in recurrent_nodes:
+
+        is_quantized = True
         input_node = get_node_input(recurrent_node, 0)
         while input_node.fullname not in activations_statistics:
             input_node = get_node_input(input_node, 0)
+            if input_node.type == 'Parameter':
+                is_quantized = False
+                break
+        if not is_quantized:
+            continue
+
         hidden_state_node = get_node_input(recurrent_node, 1)
         while hidden_state_node.fullname not in activations_statistics:
             hidden_state_node = get_node_input(hidden_state_node, 0)
