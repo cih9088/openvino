@@ -53,7 +53,7 @@ class CompressedModel:
                 model_config_ = model_config.deepcopy()
                 model_config_.update(model_dict)
                 self._models.append({'model': load_graph(model_config_, target_device)})
-                if len(model_config.cascade) > 1:
+                if len(model_config.cascade) > 1 and model_dict.name:
                     self._models[-1]['name'] = model_dict.name
                     self._models[-1]['model'].name = model_dict.name
         else:
