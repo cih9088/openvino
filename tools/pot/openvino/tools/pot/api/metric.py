@@ -23,10 +23,11 @@ class Metric(ABC):
         """ Returns accuracy metric value for all model outputs. """
 
     @abstractmethod
-    def update(self, output, target):
+    def update(self, output, target, metadata=None):
         """ Calculates and updates accuracy metric value
         :param output: model output
         :param target: annotations
+        :param metadata: metadata
         """
 
     @abstractmethod

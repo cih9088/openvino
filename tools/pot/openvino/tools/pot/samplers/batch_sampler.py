@@ -15,12 +15,19 @@ class BatchSampler(Sampler):
         return self.num_samples
 
     def __iter__(self):
+        collate_fn = getattr(self._data_loader, "collate_fn", None)
         batch = []
         for idx in self._subset_indices:
             batch.append(self._data_loader[idx])
             if len(batch) == self.batch_size:
+                if collate_fn is not None:
+                    batch = collate_fn(batch)
+                    assert isinstance(batch, list)
                 yield batch
                 batch = []
 
         if batch:
+            if collate_fn is not None:
+                batch = collate_fn(batch)
+                assert isinstance(batch, list)
             yield batch

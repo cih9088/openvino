@@ -26,3 +26,6 @@ class DataLoader(ABC):
     @abstractmethod
     def __len__(self):
         pass
+
+    def collate_fn(self, batch):
+        return batch
