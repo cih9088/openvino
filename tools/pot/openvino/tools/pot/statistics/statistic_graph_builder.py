@@ -25,6 +25,7 @@ from ..statistics.function_selector import ACTIVATIONS, get_stats_function
 class StatisticGraphBuilder:
     def insert_statistic(self, model, stats_layout, stat_aliases=None):
         output_to_node_names = {}
+        is_prefix_added = len(model.models) > 1
         nodes_names_map = {m['model'].name: {} for m in model.models}
         if stat_aliases is None or model is None:
             for node_name in stats_layout.keys():
@@ -84,7 +85,10 @@ class StatisticGraphBuilder:
                         result_name = next((result for result, node in output_to_node_names.items()
                                             if node == node_name_in_graph))
                     else:
-                        model_graph.graph['additional_outputs'] = node_name_in_graph.split('|')
+                        original_node_name_in_graph = node_name_in_graph
+                        if is_prefix_added:
+                            original_node_name_in_graph = node_name_in_graph.split('_', 1)[1]
+                        model_graph.graph['additional_outputs'] = original_node_name_in_graph.split('|')
                         results = AddOutputRecursive().find_and_replace_pattern(model_graph)
                         assert len(results) == 1
                         result_name = results[0].name

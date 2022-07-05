@@ -126,10 +126,11 @@ class DiceIndex(Metric):
         """
         return {self._name: np.mean(self._overall_metric)}
 
-    def update(self, output, target):
+    def update(self, output, target, meta):
         """ Calculates and updates metric value
         :param output: model output
         :param target: annotations
+        :param meta: metadata
         """
         if len(output) != 1 or len(target) != 1:
             raise Exception('The Dice Index metric cannot be calculated '

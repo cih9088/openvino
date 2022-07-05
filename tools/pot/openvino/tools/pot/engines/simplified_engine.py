@@ -18,6 +18,7 @@ class SimplifiedEngine(IEEngine):
 
     def _process_infer_output(self, stats_layout, predictions,
                               batch_annotations, batch_meta, need_metrics_per_sample):
-        # Collect statistics
-        if stats_layout:
-            append_stats(self._accumulated_layer_stats, stats_layout, predictions, 0)
+        for prediction in predictions.values():
+            # Collect statistics
+            if stats_layout:
+                append_stats(self._accumulated_layer_stats, stats_layout, prediction, 0)

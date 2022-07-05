@@ -45,17 +45,19 @@ class IEEngine(Engine):
         """ Loads NetworkX model into InferenceEngine and stores it in Engine class
         :param model: CompressedModel instance
         """
-        if model.is_cascade:
-            raise Exception('Cascade models are not supported in current engine')
-
         # save NetworkX graph to IR and use it to initialize IE Network
-        self._model = self._set_model(model)[0]['model']
+        self._model = self._set_model(model)
 
-        self._output_layers = []
-        for output in self._model.outputs:
-            name = get_clean_name(output.get_node().friendly_name)
-            if not filter_layers_func or (filter_layers_func and filter_layers_func(name)):
-                self._output_layers.append(name)
+        self._output_layers = dict()
+        for model_name, model in self._model.items():
+            output_layers = []
+            for output in model.outputs:
+                name = get_clean_name(next(iter(output.get_tensor().get_names())))
+                if not filter_layers_func or (
+                    filter_layers_func and filter_layers_func(name)
+                ):
+                    output_layers.append(name)
+            self._output_layers[model_name] = output_layers
 
     def _set_model(self, model):
         """Creates IENetwork instances from NetworkX models in CompressedModel.
@@ -70,12 +72,13 @@ class IEEngine(Engine):
         """
         self._nx_model = model
         paths = save_model(model, self._tmp_dir.name, 'tmp_model', for_stat_collection=True)
-        ie_networks = []
-        for path_dict in paths:
-            ie_net = {'model': self._ie.read_model(model=path_dict['model'], weights=path_dict['weights'])}
+        ie_networks = {}
+        for idx, path_dict in enumerate(paths):
             if 'name' in path_dict:
-                ie_net.update(name=path_dict['name'])
-            ie_networks.append(ie_net)
+                name = path_dict["name"]
+            else:
+                name = idx
+            ie_networks[name] = self._ie.read_model(model=path_dict['model'], weights=path_dict['weights'])
         return ie_networks
 
     def predict(self, stats_layout=None, sampler=None, stat_aliases=None,
@@ -108,17 +111,22 @@ class IEEngine(Engine):
                 insert_statistic(copy.deepcopy(self._nx_model),
                                  stats_layout, stat_aliases)
             self.set_model(model_with_stat_op, lambda name: name not in output_to_node_names)
-            nodes_names_map = nodes_names_map[self._model.friendly_name]
-            nodes_name = list(nodes_names_map.keys())
-            cast_friendly_names(self._model.outputs)
 
-            outputs = self._add_outputs(list(nodes_names_map.values()))
-            add_tensor_names(outputs, nodes_name)
+            model_output_names = []
+            nodes_names = []
+            for model_name, model in self._model.items():
+                nodes_names_map_ = nodes_names_map[model.friendly_name]
+                nodes_name = list(nodes_names_map_.keys())
+                cast_friendly_names(model.outputs)
 
-            model_output_names = collect_model_outputs(self._model)
+                outputs = self._add_outputs(list(nodes_names_map_.values()), model_name)
+                add_tensor_names(outputs, nodes_name)
+
+                model_output_names.extend(collect_model_outputs(model))
+                nodes_names.extend(nodes_name)
 
             align_stat_names_with_results(model_output_names,
-                                          nodes_name,
+                                          nodes_names,
                                           output_to_node_names,
                                           stats_layout,
                                           stat_aliases)
@@ -167,15 +175,20 @@ class IEEngine(Engine):
         self._per_sample_metrics = []
         self._accumulated_layer_stats = {}
 
-    def _add_outputs(self, nodes_name):
-        return self._model.add_outputs(nodes_name)
+    def _add_outputs(self, nodes_name, model_name):
+        return self._model[model_name].add_outputs(nodes_name)
 
     def _predict(self, stats_layout, sampler, print_progress=False,
                  need_metrics_per_sample=False):
         """Performs model inference synchronously or asynchronously"""
         requests_number = self._get_requests_number(stats_layout)
+        inference_fn = self.config.get("inference_fn", None)
 
-        if requests_number == 1:
+        assert not self._nx_model.is_cascade or inference_fn is not None, (
+            "cacaded model must implement 'inference_fn'",
+        )
+
+        if requests_number == 1 or inference_fn:
             self._process_dataset(stats_layout=stats_layout,
                                   sampler=sampler,
                                   print_progress=print_progress,
@@ -189,20 +202,27 @@ class IEEngine(Engine):
 
     def _process_infer_output(self, stats_layout, predictions,
                               batch_annotations, batch_meta, need_metrics_per_sample):
-        # Collect statistics
-        if stats_layout:
-            self._collect_statistics(outputs=predictions,
-                                     stats_layout=stats_layout,
-                                     annotations=batch_annotations)
+        outputs = dict()
+        for model_name, prediction in predictions.items():
+            # Collect statistics
+            if stats_layout:
+                self._collect_statistics(outputs=prediction,
+                                         stats_layout=stats_layout,
+                                         annotations=batch_annotations)
 
-        # Postprocess network output
-        processed_outputs = process_raw_output(predictions)
-        outputs = {name: processed_outputs[name] for name in self._output_layers}
-        logits = self.postprocess_output(outputs, batch_meta)
+            # Postprocess network output
+            if not isinstance(list(prediction.keys())[0], str):
+                prediction = process_raw_output(prediction)
+            output = {name: prediction[name] for name in self._output_layers[model_name]}
+            output = self.postprocess_output(output, batch_meta)
+            outputs[model_name] = output
+
+        if len(self._model) == 1:
+            outputs = list(outputs.values())[0]
 
         # Update metrics
-        if batch_annotations:
-            self._update_metrics(output=logits, annotations=batch_annotations,
+        if batch_annotations and outputs:
+            self._update_metrics(output=outputs, annotations=batch_annotations,
                                  metas=batch_meta,
                                  need_metrics_per_sample=need_metrics_per_sample)
 
@@ -259,9 +279,13 @@ class IEEngine(Engine):
         )
         return batch_time_steps[0]
 
-    def _process_recurrent_batch(self, time_step, image_batch, prediction, recur_map):
+    def _process_recurrent_batch(self, time_step, image_batch, predictions, recur_map):
         """Makes batch for a recurrent / stateful network
         """
+
+        for k, prediction in predictions.items():
+            if not isinstance(list(prediction.keys())[0], str):
+                predictions[k] = process_raw_output(prediction)
 
         batch = []
         for image in image_batch:
@@ -269,10 +293,18 @@ class IEEngine(Engine):
             for k, v in image.items():
                 single_item[k] = v[time_step]
 
-            if prediction:
+            if predictions:
                 for out_name, in_name in recur_map.items():
                     if single_item[in_name] is None:
-                        single_item[in_name] = prediction[out_name]
+                        found = False
+                        for prediction in predictions.values():
+                            if out_name in prediction:
+                                single_item[in_name] = prediction[out_name]
+                                found = True
+                                break
+                        assert found, (
+                            f"{out_name} not found in model output."
+                        )
 
             batch.append(single_item)
         return batch
@@ -422,9 +454,10 @@ class IEEngine(Engine):
         recurrent_out_in_map = self.config.get("recurrent_out_in_map")
 
         def completion_callback(request, user_data):
-            start_time, batch_id, batch_annotations, batch_meta = user_data
+            model_name, start_time, batch_id, batch_annotations, batch_meta = user_data
             predictions = request.results
-            self._process_infer_output(stats_layout, predictions,
+            outputs = {model_name: predictions}
+            self._process_infer_output(stats_layout, outputs,
                                        batch_annotations, batch_meta,
                                        need_metrics_per_sample)
 
@@ -435,7 +468,7 @@ class IEEngine(Engine):
                 start_time = time()
 
         def recurrent_completion_callback(request, user_data):
-            start_time, batch_id, batch_annotations, batch_meta, \
+            model_name, start_time, batch_id, batch_annotations, batch_meta, \
                 cur_time_step, max_time_step, image_batch = user_data
 
             for meta in batch_meta:
@@ -444,13 +477,15 @@ class IEEngine(Engine):
                 meta[META_KEY_MAX_TIME_STEP] = max_time_step
 
             predictions = request.results
-            self._process_infer_output(stats_layout, predictions,
+            outputs = {model_name: predictions}
+            self._process_infer_output(stats_layout, outputs,
                                        batch_annotations, batch_meta,
                                        need_metrics_per_sample)
 
             if cur_time_step < max_time_step - 1:
                 cur_time_step += 1
                 user_data = (
+                    model_name,
                     start_time,
                     batch_id,
                     batch_annotations,
@@ -472,11 +507,17 @@ class IEEngine(Engine):
         self._ie.set_property(self._device,
                               {'CPU_THROUGHPUT_STREAMS': 'CPU_THROUGHPUT_AUTO', 'CPU_BIND_THREAD': 'YES'})
         # Load model to the plugin
-        compiled_model = self._ie.compile_model(model=self._model, device_name=self._device)
-        optimal_requests_num = compiled_model.get_property('OPTIMAL_NUMBER_OF_INFER_REQUESTS')
-        requests_num = optimal_requests_num if requests_num == 0 else requests_num
-        logger.debug('Async mode requests number: %d', requests_num)
-        infer_queue = AsyncInferQueue(compiled_model, requests_num)
+
+        compiled_models = dict()
+        infer_queues = dict()
+        for model_name, model in self._model.items():
+            compiled_model = self._ie.compile_model(model=model, device_name=self._device)
+            optimal_requests_num = compiled_model.get_property('OPTIMAL_NUMBER_OF_INFER_REQUESTS')
+            requests_num = optimal_requests_num if requests_num == 0 else requests_num
+            logger.debug('Async mode for model %s requests number: %d', model_name,  requests_num)
+            infer_queue = AsyncInferQueue(compiled_model, requests_num)
+            compiled_models[model_name] = compiled_model
+            infer_queues[model_name] = infer_queue
 
         progress_log_fn('Start inference of %d images', len(sampler))
 
@@ -484,51 +525,73 @@ class IEEngine(Engine):
         # Start inference
         start_time = time()
         if recurrent_out_in_map:
-            infer_queue.set_callback(recurrent_completion_callback)
+            for infer_queue in infer_queues.values():
+                infer_queue.set_callback(recurrent_completion_callback)
             internal_queue = multiprocessing.Queue()
 
+            # inference batches at time zero
             total_batch_ctr = 0
             for batch_id, data_batch in sampler_iter:
                 batch_annotations, image_batch, batch_meta = self._process_batch(data_batch)
+                assert isinstance(image_batch[0], dict)
                 total_batch_ctr += 1
 
                 max_time_step = self._get_max_time_step(image_batch)
-                user_data = (
-                    start_time,
-                    batch_id,
-                    batch_annotations,
-                    batch_meta,
-                    0,
-                    max_time_step,
-                    image_batch
-                )
                 recur_batch = self._process_recurrent_batch(
                     0, image_batch, {}, recurrent_out_in_map
                 )
-                infer_queue.start_async(self._fill_input(compiled_model, recur_batch), user_data)
+                for model_name in infer_queues.keys():
+                    user_data = (
+                        model_name,
+                        start_time,
+                        batch_id,
+                        batch_annotations,
+                        batch_meta,
+                        0,
+                        max_time_step,
+                        image_batch
+                    )
+                    infer_queue = infer_queues[model_name]
+                    compiled_model = compiled_models[model_name]
+                    infer_queue.start_async(
+                        self._fill_input(compiled_model, recur_batch), user_data
+                    )
 
+            # inference batches afterwards
             ctr = 0
             while ctr < total_batch_ctr:
                 is_done, predictions, user_data = internal_queue.get()
                 if is_done:
                     ctr += 1
                     continue
-                cur_time_step = user_data[4]
-                image_batch = user_data[6]
+                model_name = user_data[0]
+                cur_time_step = user_data[5]
+                image_batch = user_data[7]
                 recur_batch = self._process_recurrent_batch(
                     cur_time_step,
                     image_batch,
-                    predictions,
+                    {model_name: predictions},
                     recurrent_out_in_map
                 )
-                infer_queue.start_async(self._fill_input(compiled_model, recur_batch), user_data)
+                infer_queues[model_name].start_async(
+                    self._fill_input(compiled_models[model_name], recur_batch),
+                    user_data
+                )
         else:
-            infer_queue.set_callback(completion_callback)
+            for infer_queue in infer_queues.values():
+                infer_queue.set_callback(completion_callback)
+
             for batch_id, data_batch in sampler_iter:
                 batch_annotations, image_batch, batch_meta = self._process_batch(data_batch)
-                user_data = (start_time, batch_id, batch_annotations, batch_meta)
-                infer_queue.start_async(self._fill_input(compiled_model, image_batch), user_data)
-        infer_queue.wait_all()
+
+                for model_name in infer_queues.keys():
+                    user_data = (model_name, start_time, batch_id, batch_annotations, batch_meta)
+                    infer_queue = infer_queues[model_name]
+                    compiled_model = compiled_models[model_name]
+                    infer_queue.start_async(self._fill_input(compiled_model, image_batch), user_data)
+
+        for infer_queue in infer_queues.values():
+            infer_queue.wait_all()
         progress_log_fn('Inference finished')
 
     def _process_dataset(self, stats_layout, sampler, print_progress=False,
@@ -542,11 +605,17 @@ class IEEngine(Engine):
         """
 
         progress_log_fn = logger.info if print_progress else logger.debug
-        recurrent_out_in_map = self.config.get("recurrent_out_in_map")
+        recurrent_out_in_map = self.config.get("recurrent_out_in_map", None)
+        inference_fn = self.config.get("inference_fn", None)
 
         # Load model to the plugin
-        compiled_model = self._ie.compile_model(model=self._model, device_name=self._device)
-        infer_request = compiled_model.create_infer_request()
+        compiled_models = dict()
+        infer_requests = dict()
+        for model_name, model in self._model.items():
+            compiled_model = self._ie.compile_model(model=model, device_name=self._device)
+            infer_request = compiled_model.create_infer_request()
+            compiled_models[model_name] = compiled_model
+            infer_requests[model_name] = infer_request
 
         progress_log_fn('Start inference of %d images', len(sampler))
 
@@ -556,20 +625,60 @@ class IEEngine(Engine):
             batch_annotations, image_batch, batch_meta = self._process_batch(batch)
 
             # Infer batch of images
-            if recurrent_out_in_map:
-                max_time_step = self._get_max_time_step(image_batch)
+            if inference_fn:
+                if len(infer_requests) == 1:
+                    predictions, batch_meta = inference_fn(
+                        image_batch,
+                        batch_meta,
+                        list(infer_requests.values())[0],
+                        list(compiled_models.values())[0]
+                    )
+                    predictions = {list(infer_requests.keys())[0]: predictions}
+                else:
+                    predictions, batch_meta = inference_fn(
+                        image_batch,
+                        batch_meta,
+                        infer_requests,
+                        compiled_models
+                    )
 
-                predictions = {}
+                assert set(predictions.keys()) == set(infer_requests.keys()), (
+                    "'inference_fn' must return a dictionary with keys"
+                    f"{list(infer_requests.keys())}"
+                )
+
+                max_len = max(len(v) for v in predictions.values())
+                for i in range(max_len):
+                    outputs = {
+                        k: v[i] for k, v in predictions.items() if len(v) > i
+                    }
+                    self._process_infer_output(
+                        stats_layout,
+                        outputs,
+                        batch_annotations,
+                        batch_meta,
+                        need_metrics_per_sample
+                    )
+
+            elif recurrent_out_in_map:
+                assert isinstance(image_batch[0], dict)
+
+                max_time_step = self._get_max_time_step(image_batch)
+                predictions = dict()
                 for time_step in range(max_time_step):
                     recur_batch = self._process_recurrent_batch(
                         time_step,
                         image_batch,
-                        process_raw_output(predictions),
+                        predictions,
                         recurrent_out_in_map
                     )
-                    predictions = infer_request.infer(
-                        self._fill_input(compiled_model, recur_batch)
-                    )
+                    predictions = dict()
+                    for model_name in infer_requests.keys():
+                        infer_request = infer_requests[model_name]
+                        compiled_model = compiled_models[model_name]
+                        predictions[model_name] = infer_request.infer(
+                            self._fill_input(compiled_model, recur_batch)
+                        )
                     for meta in batch_meta:
                         meta[META_KEY_BATCH_ID] = batch_id
                         meta[META_KEY_CUR_TIME_STEP] = time_step
@@ -584,7 +693,13 @@ class IEEngine(Engine):
                     )
 
             else:
-                predictions = infer_request.infer(self._fill_input(compiled_model, image_batch))
+                predictions = dict()
+                for model_name in infer_requests.keys():
+                    infer_request = infer_requests[model_name]
+                    compiled_model = compiled_models[model_name]
+                    predictions[model_name] = infer_request.infer(
+                        self._fill_input(compiled_model, image_batch)
+                    )
 
                 self._process_infer_output(stats_layout, predictions,
                                            batch_annotations, batch_meta,
