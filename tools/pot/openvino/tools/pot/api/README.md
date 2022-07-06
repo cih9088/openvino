@@ -13,15 +13,17 @@ The base class for all DataLoaders.
 by index. 
 
 All subclasses should override `__len__()` function, which should return the size of the dataset, and `__getitem__()`, 
-which supports integer indexing in the range of 0 to `len(self)`. `__getitem__()` method can return data in one of the possible formats:
+which supports integer indexing in the range of 0 to `len(self)`, and optionally `collate_fn(batch)` which is called with batched data if sampler is `BatchSampler`.
+`__getitem__(index)` method can return data in one of the possible formats:
 ```
-(data, annotation)
+(annotation, data)
 ```
 or
 ```
-(data, annotation, metadata)
+(annotation, data, metadata)
 ```
-`data` is the input that is passed to the model at inference so that it should be properly preprocessed. `data` can be either `numpy.array` object or dictionary where the key is the name of the model input and value is `numpy.array` which corresponds to this input. The format of `annotation` should correspond to the expectations of the `Metric` class. `metadata` is an optional field that can be used to store additional information required for post-processing.
+`data` is the input that is passed to the model at inference so that it should be properly preprocessed. `data` can be either `numpy.array` object or dictionary where the key is the name of the model input and value is `numpy.array` which corresponds to this input. The format of `annotation` should a tuple `(item_id, label)` or a dictionary `{item_id: label}` and `label` corresponds to the expectations of the `Metric` class. `metadata` is an optional field that can be used to store additional information required for post-processing.
+`collate_fn(batch)` get a list of data from `__getitem__(index)` and it should return the same structure. This is where one should pad dataset or truncate to match dimenstion of each data in batch, or postprocess per batch, for example, normalizing per batch, etc.
 
 ### Metric
 
@@ -36,7 +38,7 @@ All instances should override the following properties:
 - `higher_better` should return `True` if a higher value of the metric corresponds to better performance, otherwise, returns `False`. Default implementation returns `True`.
 
 and methods:
-- `update(output, annotation)` - calculates and updates the accuracy metric value using the last model output and annotation. The model output and annotation should be passed in this method. It should also contain the model-specific post-processing in case the model returns the raw output.
+- `update(output, annotation, metadata=None)` - calculates and updates the accuracy metric value using the last model output and annotation. The model output and annotation should be passed in this method. It should also contain the model-specific post-processing in case the model returns the raw output. Note that `metadata` is only passed to the method if it contains any.
 - `reset()` - resets collected accuracy metric. 
 - `get_attributes()` - returns a dictionary of metric attributes:
    ```
@@ -158,7 +160,7 @@ describe internal representation of the DL model and how to work with it.
 ```
 class openvino.tools.pot.IEEngine(config, data_loader=None, metric=None)
 ```
-IEEngine is a helper which implements Engine class based on [OpenVINO&trade; Inference Engine Python* API](ie_python_api/api.html).
+IEEngine is a helper which implements Engine class based on [OpenVINO&trade; Inference Engine Python* API](api/ie_python_api/api.html).
 This class support inference in synchronous and asynchronous modes and can be reused as-is in the custom pipeline or 
 with some modifications, e.g. in case of custom post-processing of inference results.
 
@@ -173,12 +175,11 @@ The following methods can be overridden in subclasses:
   
 `IEEngine` supports data returned by `DataLoader` in the format:
 ```
-(data, annotation)
+(annotation, data)
 ```
 or
 ```
-(data, annotation, metadata)
-```
+(annotation, data, metadata)
 
 Metric values returned by a `Metric` instance are expected to be in the format:
 - for `value()`:

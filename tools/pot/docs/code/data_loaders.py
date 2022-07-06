@@ -39,7 +39,7 @@ class ImageLoader(DataLoader):
         image = cv.resize(image, self._shape) # resize to a target input size
         image = np.expand_dims(image, 0)  # add batch dimension
         image = image.transpose(0, 3, 1, 2)  # convert to NCHW layout
-        return image, None   # annotation is set to None
+        return None, image   # annotation is set to None
 #! [image_loader]
 
 #! [text_loader]
@@ -82,9 +82,11 @@ class TextLoader(DataLoader):
             raise IndexError("Index out of dataset size")
 
         data = self._dataset['train'][index]
-        return {'input_ids': data['input_ids'],
-                'token_type_ids': data['token_type_ids'],
-                'attention_mask': data['attention_mask']}, None # annotation is set to None
+        return None, {  # annotation is set to None
+            'input_ids': data['input_ids'],
+            'token_type_ids': data['token_type_ids'],
+            'attention_mask': data['attention_mask']
+            }
 #! [text_loader]
 
 #! [audio_loader]
@@ -118,5 +120,5 @@ class AudioLoader(DataLoader):
         file_name = self._files[index] + self._extension
         file_path = os.path.join(self._dataset_path, file_name)
         waveform, _ = torchaudio.load(file_path) # use a helper from torchaudio to load data
-        return waveform.numpy(), None   # annotation is set to None
+        return None, waveform.numpy()    # annotation is set to None
 #! [audio_loader]

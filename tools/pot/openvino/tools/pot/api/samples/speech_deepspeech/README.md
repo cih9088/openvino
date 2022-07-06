@@ -5,7 +5,7 @@ The [DeepSpeech](https://github.com/openvinotoolkit/open_model_zoo/blob/master/m
 A Custom `DataLoader` is created to load [LibriSpeech](https://www.openslr.org/12) dataset for a ASR task and the implementation of Word Error Rate (WER) metric is used for the model evaluation. In addition, this example demonstrates how one use `recurrent_out_in_map` and `inference_fn` to infer a recurrent model. The code of the example is available on [GitHub](https://github.com/openvinotoolkit/openvino/tree/master/tools/pot/openvino/tools/pot/api/samples/speech_deepspeech).
 
 ## How to run the example
-1. Install [ctcdecode-numpy](https://github.com/openvinotoolkit/open_model_zoo/tree/master/demos/speech_recognition_deepspeech_demo/python/ctcdecode-numpy) from [Open Model Zoo](https://github.com/openvinotoolkit/open_model_zoo) demo for CTC beam decoding.
+1. Install [ctcdecode-numpy](https://github.com/openvinotoolkit/open_model_zoo/tree/master/demos/speech_recognition_deepspeech_demo/python/ctcdecode-numpy) from [Open Model Zoo](https://github.com/openvinotoolkit/open_model_zoo) CTC beam decoding.
    ```sh
    git clone https://github.com/openvinotoolkit/open_model_zoo.git
    python -m pip install open_model_zoo/demos/speech_recognition_deepspeech_demo/python/ctcdecode-numpy

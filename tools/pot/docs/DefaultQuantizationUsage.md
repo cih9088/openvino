@@ -24,10 +24,20 @@ The script should include three basic steps:
 In most cases, it is required to implement only `openvino.tools.pot.DataLoader` interface which allows acquiring data from a dataset and applying model-specific pre-processing providing access by index. Any implementation should override the following methods: 
 
 - `__len__()`, returns the size of the dataset
-- `__getitem__()`, provides access to the data by index in range of 0 to `len(self)`. It also can encapsulate the logic of model-specific pre-processing. The method should return data in the following format:
-   - `(data, annotation)`
+- `__getitem__()`, provides access to the data by index in range of 0 to `len(self)`. It also can encapsulate the logic of model-specific pre-processing per a single data item. The method should return data in the following format:
+   - `(annotation, data)`
+   - `(annotation, data, metadata)`
 
-where `data` is the input that is passed to the model at inference so that it should be properly preprocessed. `data` can be either `numpy.array` object or dictionary, where the key is the name of the model input and value is `numpy.array` which corresponds to this input. Since `annotation` is not used by the Default Quantization method this object can be `None` in this case.
+where `data` is the input that is passed to the model at inference so that it should be properly preprocessed. `data` can be either `numpy.array` object or dictionary, where the key is the name of the model input and value is `numpy.array` which corresponds to this input. Since `annotation` is not used by the Default Quantization method this object can be `None` in this case. `metadata` is an optional field that can be used later for post-processing.
+
+Optionally one could override the following methods:
+
+- `collate_fn()`, returns list of data (batch). It also can encapsulate the logic of model-specific pre-processing per multiple data items. The method should return in the following format:
+   - `[(annotation, data), (annotation, data), ...]`
+   - `[(annotation, data, metadata), (annotation, data, metadata), ...]`
+
+where `annotation`, `data`, `metadata` are the same above.
+
   
 You can wrap framework data loading classes by `openvino.tools.pot.DataLoader` interface which is usually straightforward. For example, `torch.utils.data.Dataset` has a similar interface as `openvino.tools.pot.DataLoader` so that its TorchVision implementations can be easily wrapped by POT API.
 
@@ -139,7 +149,11 @@ The output of the script is the quantized model that can be used for inference i
 If accuracy degradation after applying the Default Quantization method is high, it is recommended to try tips from [Quantization Best Practices](@ref pot_docs_BestPractices) document or use [Accuracy-aware Quantization](@ref pot_accuracyaware_usage) method.
 
 ## Quantizing cascaded models
-In some cases, when the optimizing model is a cascaded model, i.e. consists of several submodels, for example, MT-CNN, you will need to implement a complex inference pipeline that can properly handle different submodels and data flow between them. POT API provides an `Engine` interface for this purpose which allows customization of the inference logic. However, we suggest inheriting from `IEEngine` helper class that already contains all the logic required to do the inference based on OpenVINO&trade; Python API. See the following [example](@ref pot_example_face_detection_README).
+In some cases, when the optimizing model is a cascaded model, i.e. consists of several submodels, for example, MT-CNN, you will need to implement a complex inference pipeline that can properly handle different submodels and data flow between them.
+POT API provides two options for this purpose. Fisrt and easier option is to provide custom `inference_fn` to the engine. One implements a complex inference pipeline in this single function and POT will take care of rest. Second option is to inherit `Engine` interface which allows customization of the inference logit. However, we suggest inheriting from `IEEngine` helper class that already contains all the logic required to do the inference based on OpenVINO&trade; Python API. See the following [example](@ref pot_example_face_detection_README).
+
+## Quantizing recurrent models
+If model is somehow recurrent, for example, mozilla-deepspeech, you will need to provide `recurrent_out_in_map` to the engine. This would requires a bit of work, for example, data item must be a dictionary not a numpy.ndarray and it should contain input and hidden/cell states at each time step. The hidden/cell states have to be `None` if they should be fetched from model output at previous time step. Of course, providing `inference_fn` to the engine and customizing `Engine` would be available as well. See the following [example](@ref pot_example_deepspeech_README).
 
 ## Examples
 
@@ -151,5 +165,6 @@ In some cases, when the optimizing model is a cascaded model, i.e. consists of s
 * Samples:
   * [Quantization of 3D segmentation model](https://github.com/openvinotoolkit/openvino/tree/master/tools/pot/openvino/tools/pot/api/samples/3d_segmentation)
   * [Quantization of Face Detection model](https://github.com/openvinotoolkit/openvino/tree/master/tools/pot/openvino/tools/pot/api/samples/face_detection)
-  * [Quantizatin of speech model for GNA device](https://github.com/openvinotoolkit/openvino/tree/master/tools/pot/openvino/tools/pot/api/samples/speech)
+  * [Quantization of speech model for GNA device](https://github.com/openvinotoolkit/openvino/tree/master/tools/pot/openvino/tools/pot/api/samples/speech)
+  * [Quantization of recurrent model](https://github.com/openvinotoolkit/openvino/tree/master/tools/pot/openvino/tools/pot/api/samples/speech_deepspeech)
 
