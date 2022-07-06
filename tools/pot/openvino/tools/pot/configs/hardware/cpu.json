@@ -230,9 +230,14 @@
         },
         {
             "type": "LSTMCell",
+            "attributes": {
+                "scales": {
+                  "unified": [[0, 1], [3, 4]]
+                }
+            },
             "quantization": {
                 "activations": "q8_a",
-                "weights": "q8_w_sym"
+                "weights": ["q8_w_sym"]
             }
         },
         {"type": "Reshape"},

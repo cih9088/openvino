@@ -321,46 +321,9 @@ def get_quantized_model(model, create_stats_collector, activations_statistics,
     # compute weights statistics
     weights_stats = compute_weights_stats(model, weights_stats_layout)
 
-    aggregate_recurrent_stats(model, activations_statistics)
-
     # calculate and fill min and max range for fq nodes
     fill_fq_range(model, weights_stats, activations_statistics, fake_quantize_config, config)
     return model
-
-
-def aggregate_recurrent_stats(model, activations_statistics):
-    """ Aggregate input and hidden state statistics to have equal FQ constants
-    (required by oneDNN library)
-    """
-
-    recurrent_nodes = get_nodes_by_type(
-        model, [op['type'] for op in RECURRENT_OPERATIONS], recursively=True
-    )
-    for recurrent_node in recurrent_nodes:
-
-        is_quantized = True
-        input_node = get_node_input(recurrent_node, 0)
-        while input_node.fullname not in activations_statistics:
-            input_node = get_node_input(input_node, 0)
-            if input_node.type == 'Parameter':
-                is_quantized = False
-                break
-        if not is_quantized:
-            continue
-
-        hidden_state_node = get_node_input(recurrent_node, 1)
-        while hidden_state_node.fullname not in activations_statistics:
-            hidden_state_node = get_node_input(hidden_state_node, 0)
-
-        input_activations_statistics = activations_statistics[input_node.fullname]
-        hidden_activations_statistics = activations_statistics[hidden_state_node.fullname]
-        assert input_activations_statistics.keys() == hidden_activations_statistics.keys()
-
-        for key in input_activations_statistics.keys():
-            i = [i for i in input_activations_statistics[key]]
-            h = [h for h in hidden_activations_statistics[key]]
-            input_activations_statistics[key].extend(h)
-            hidden_activations_statistics[key].extend(i)
 
 
 def compute_weights_stats(model, stats_layout):
@@ -488,7 +451,7 @@ def unify_fq_scales(model, config):
         min_levels = []
         max_levels = []
         for fq in fqs:
-            fq = get_node_by_name(model, fq)
+            fq = get_node_by_name(model, fq, recursively=True)
             fq_inputs = get_node_inputs(fq)[1:]
             min_levels.append(get_node_value(fq_inputs[0]))
             max_levels.append(get_node_value(fq_inputs[1]))
@@ -496,7 +459,7 @@ def unify_fq_scales(model, config):
         min_levels = _custom_broadcast(min_levels)
         max_levels = _custom_broadcast(max_levels)
         for i, fq in enumerate(fqs):
-            fq = get_node_by_name(model, fq)
+            fq = get_node_by_name(model, fq, recursively=True)
             min_level = np.min(min_levels, axis=0).reshape(orig_shapes[i])
             max_level = np.max(max_levels, axis=0).reshape(orig_shapes[i])
 

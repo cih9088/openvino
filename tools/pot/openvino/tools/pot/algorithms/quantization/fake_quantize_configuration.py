@@ -6,7 +6,8 @@ from copy import deepcopy
 
 from .range_estimator import get_range_estimator_config
 from .utils import get_hardware_config_operation_type, load_hardware_config
-from ...graph.special_operations import QUANTIZE_AGNOSTIC_OPERATIONS, CONCAT_UNIFY_OUTPUTS, CONCAT_UNIFY_INPUTS
+from ...graph.special_operations import QUANTIZE_AGNOSTIC_OPERATIONS, CONCAT_UNIFY_OUTPUTS, \
+    CONCAT_UNIFY_INPUTS, RECURRENT_OPERATIONS
 from ...graph.utils import find_operation_matches, get_operation_list, is_data_type_quantizable
 from ...graph.model_utils import get_nodes_by_type, get_node_by_name
 from ...graph.node_utils import get_input_shape, get_all_node_outputs,\
@@ -192,23 +193,38 @@ def get_configurations_by_preset(config, model, fq_to_hw_confs):
                 return any([s[0] != shapes[0][0] or len(s) == 1 or s[1] != shapes[0][1] for s in shapes])
 
             for bridges, fqs in fqs_to_unify_:
+                i_type = set()
+                for fq in fqs:
+                    i_type.update([k for k in cur_conf[fq].keys()])
+                assert len(i_type) == 1, (
+                    f"Unifying FakeQuantize must be the same type, but {i_type} given. {fqs}."
+                )
+                i_type = next(iter(i_type))
+                assert i_type in ["activations", "weights"]
+
                 res_conf = []
-                with_concat = 'Concat' in [get_node_by_name(model, bridge).type for bridge in bridges]
-                fq_input_shapes = [get_input_shape(get_node_by_name(model, fq), 0) for fq in fqs]
+                with_concat = 'Concat' in [get_node_by_name(model, bridge, recursively=True).type for bridge in bridges]
+                fq_input_shapes = [get_input_shape(get_node_by_name(model, fq, recursively=True), 0) for fq in fqs]
                 unclear_layout = _test_shapes(fq_input_shapes)
-                bridge_layers = [get_node_by_name(model, bridge) for bridge in bridges]
+                bridge_layers = [get_node_by_name(model, bridge, recursively=True) for bridge in bridges]
                 bridge_input_shapes = [get_input_shape(layer, i) for layer in bridge_layers for i in layer.in_ports()]
                 broadcasting = _test_shapes(bridge_input_shapes)
                 for fq in fqs:
                     if with_concat or unclear_layout or broadcasting:
-                        configuration = [c for c in cur_conf[fq]['activations'] if c['granularity'] == 'pertensor']
+                        if 'activations' in cur_conf[fq]:
+                            configuration = [c for c in cur_conf[fq]['activations'] if c['granularity'] == 'pertensor']
+                        elif "weights" in cur_conf[fq]:
+                            if isinstance(cur_conf[fq]["weights"], list):
+                                configuration = [c for c in cur_conf[fq]['weights']]
+                            else:
+                                configuration = [cur_conf[fq][i_type]]
                     else:
-                        configuration = cur_conf[fq]['activations']
+                        configuration = cur_conf[fq][i_type]
                     res_conf = intersect_configs(res_conf, configuration) if res_conf else configuration
                 if not res_conf:
                     raise Exception('Fake quantize nodes {} cannot be unified'.format(fqs))
                 for fq in fqs:
-                    cur_conf[fq]['activations'] = _apply_preset_rule(preset_, fq, 'activations', res_conf)
+                    cur_conf[fq][i_type] = _apply_preset_rule(preset_, fq, i_type, res_conf)
             return cur_conf
 
         res = {}
@@ -269,9 +285,14 @@ def find_fqs_to_unify(model, config):
         unified_scales_ops_ = []
         for hw_op in hw_ops_:
             if 'attributes' in hw_op and 'scales' in hw_op['attributes']:
-                del hw_op['attributes']['scales']
-                if not hw_op['attributes']:
-                    del hw_op['attributes']
+                scales = hw_op["attributes"].pop("scales")
+                if not hw_op["attributes"]:
+                    del hw_op["attributes"]
+
+                hw_op = deepcopy(hw_op)
+                if isinstance(scales, dict):
+                    hw_op["scales"] = scales["unified"]
+
                 unified_scales_ops_.append(hw_op)
         return unified_scales_ops_
 
@@ -322,51 +343,88 @@ def find_fqs_to_unify(model, config):
     def _has_const_input(layer):
         return 'Const' in [parent.type for parent in get_node_inputs(layer) if parent]
 
-    def _process_node(node_, stack_, visited_, to_unify_):
-        visited_[node_.fullname] = True
+    def _is_recurrent_ops(layer):
+        return layer.type in [op['type'] for op in RECURRENT_OPERATIONS]
+
+    def _process_node(node_, stack_, visited_, to_unify_, scales_):
+        visited_[node_.fullname][0] = True
         if _is_unified_scales_op(node_) or _is_agnostic_branching_op(node_):
-            if not _has_const_input(node_):
+            if (not _has_const_input(node_) or _is_recurrent_ops(node)) and node_.fullname not in to_unify[0]:
                 to_unify_[0].append(node_.fullname)
-        elif node_.type == 'FakeQuantize' and get_node_input(node_, 0).type != 'Const':
-            to_unify_[1].append(node_.fullname)
+        elif node_.type == 'FakeQuantize':
+            target_node = get_all_node_outputs(node_)[0]
+            while _is_quantize_agnostic_op(target_node):
+                target_node = get_all_node_outputs(target_node)[0]
+            if get_node_input(node_, 0).type != 'Const' or target_node.type in scales_:
+                cur = len(to_unify_[1])
+                candidates = [(node_, i) for i in get_all_node_outputs(node_)]
+                for ptr, candidate in candidates:
+                    if _is_quantize_agnostic_op(candidate):
+                        candidates.extend([(candidate, i) for i in get_all_node_outputs(candidate)])
+                        continue
+                    for port_idx, port in candidate.in_ports().items():
+                        candidate_node_ = port.get_source().node
+                        if candidate_node_ == ptr:
+                            to_unify_[1].append((node_.fullname, port_idx))
+                            break
+                    if cur != len(to_unify_[1]):
+                        break
         # traverse down
         if node_.type == 'FakeQuantize' or _is_quantize_agnostic_op(node_):
             for child in get_all_node_outputs(node_):
                 node_data_type = get_node_data_type(child)
-                if not visited_[child.fullname] and is_data_type_quantizable(node_data_type) and \
+                if not all(visited_[child.fullname]) and is_data_type_quantizable(node_data_type) and \
                         (_is_quantize_agnostic_op(child) or _is_unified_scales_op(child)):
                     stack_.append(child)
         # traverse up
         if node_.type != 'FakeQuantize':
-            for parent in get_node_inputs(node_):
+            for port_idx, parent in enumerate(get_node_inputs(node_)):
                 node_data_type = get_node_data_type(parent)
-                if parent and not visited_[parent.fullname] and is_data_type_quantizable(node_data_type) and \
+                if parent and not all(visited_[parent.fullname]) and is_data_type_quantizable(node_data_type) and \
                         (parent.type == 'FakeQuantize' or _is_quantize_agnostic_op(parent)):
-                    stack_.append(parent)
+                    if node_.type in scales_:
+                        if len(visited[node_.fullname]) == 1:
+                            visited[node_.fullname] = visited[node_.fullname] + [False] * len(scales_[node_.type])
+
+                        unify_port_idx = to_unify_[1][-1][1]
+                        for idx, scale in enumerate(scales_[node_.type]):
+                            if unify_port_idx in scale and port_idx in scale:
+                                if len(to_unify_[1]) == len(scale) - 1:
+                                    visited[node_.fullname][idx + 1] = True
+                                stack_.append(parent)
+                    else:
+                        stack_.append(parent)
 
     hardware_config = load_hardware_config(config)
     hw_ops = get_operation_list(hardware_config)
     quantize_agnostic_ops = [op[1] for op in find_operation_matches(QUANTIZE_AGNOSTIC_OPERATIONS, hw_ops)]
     unified_scales_ops = _get_unified_scales_ops(hw_ops)
+    unified_scales_ops_dict = {op['type']: op['scales'] for op in unified_scales_ops if 'scales' in op}
     if not unified_scales_ops:
         return []
 
-    visited = defaultdict(lambda: False)
+    visited = defaultdict(lambda: [False])
     fqs_to_unify = []
     if model is None:
         return fqs_to_unify
     for fq in get_nodes_by_type(model, ['FakeQuantize'], recursively=True):
-        if not visited[fq.fullname] and get_node_input(fq, 0).type != 'Const':
+
+        target_node = get_all_node_outputs(fq)[0]
+        while _is_quantize_agnostic_op(target_node):
+            target_node = get_all_node_outputs(target_node)[0]
+
+        if not all(visited[fq.fullname]) and \
+                (get_node_input(fq, 0).type != 'Const' or target_node.type in unified_scales_ops_dict):
             stack = [fq]
             to_unify = [[], []]
             while stack:
                 node = stack.pop()
-                _process_node(node, stack, visited, to_unify)
+                _process_node(node, stack, visited, to_unify, unified_scales_ops_dict)
 
             if to_unify[0] and \
-                    any([_is_unified_scales_op(get_node_by_name(model, bridge)) for bridge in to_unify[0]]) and \
+                    any([_is_unified_scales_op(get_node_by_name(model, bridge, recursively=True)) for bridge in to_unify[0]]) and \
                     len(to_unify[1]) > 1:
-                fqs_to_unify.append(to_unify)
+                fqs_to_unify.append([to_unify[0], [name for (name, _) in to_unify[1]]])
 
     fqs_to_unify = sorted([[sorted(c[0]), sorted(c[1])] for c in fqs_to_unify])
     logger.debug('Operations and corresponding fake quantize nodes to unify scales:')
