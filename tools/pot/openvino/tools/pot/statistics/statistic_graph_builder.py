@@ -92,8 +92,8 @@ class StatisticGraphBuilder:
                 # add output if node in subgraph
                 if model_graph != node.graph:
                     _add_output_to_model_graph()
-
             return model, nodes_names_map, output_to_node_names
+
         copy_stat_aliases = deepcopy(stat_aliases)
         for algo_name, node_stats in copy_stat_aliases.items():
             for node_name, stats in node_stats.items():

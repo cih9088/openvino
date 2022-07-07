@@ -106,7 +106,7 @@ class OptimizationAlgorithm(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         if isinstance(self._optimizer_name, str):
             self._optimizer_name = [self._optimizer_name]
             self._maxiter = [self._maxiter]

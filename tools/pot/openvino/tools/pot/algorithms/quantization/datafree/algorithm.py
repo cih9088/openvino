@@ -26,9 +26,10 @@ class DataFreeQuantization(Algorithm):
         self._std_multiplier = 5.0
         self._bn_dict = {}
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies the data-free quantization algorithm
          :param model: model to apply algo
+         :param debuggers: a list of debugger for this algorithm
          """
         fq_input_stats = {}
 

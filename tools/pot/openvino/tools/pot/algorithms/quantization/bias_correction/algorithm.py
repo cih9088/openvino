@@ -61,10 +61,11 @@ class BiasCorrection(Algorithm):
         self._apply_for_all_nodes = self._config.get('apply_for_all_nodes', False)
         self.total_exec_steps = self._stat_subset_size
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         '''
         This function applies the bias correction algorithm.
         :param model: model to apply algorithm
+        :param debuggers: a list of debugger for this algorithm
         :return: model with corrected biases for layers with bias
         '''
         self._fp32_statistics = self._stats_collector.get_statistics_for_algorithm(self.name)
@@ -404,7 +405,7 @@ class BiasCorrection(Algorithm):
                     stat_nodes_list.append(input_node.fullname)
         return stat_nodes_list
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         self._stats_collector = stats_collector
         statistics_layout = {}
         if model.is_cascade:

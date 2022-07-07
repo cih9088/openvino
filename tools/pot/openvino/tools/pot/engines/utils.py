@@ -123,7 +123,8 @@ def restore_original_node_names(output2node, accumulated_stats, stats_layout, st
     if output2node and stats_layout:
         for out_name, original_node_name in output2node.items():
             accumulated_stats[original_node_name] = accumulated_stats.pop(out_name)
-            update_stats(stats_layout, stat_aliases, out_name, original_node_name)
+            if stat_aliases:
+                update_stats(stats_layout, stat_aliases, out_name, original_node_name)
 
 
 def align_stat_names_with_results(result_names, nodes_name, output2node, stats_layout, stat_aliases):

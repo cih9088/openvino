@@ -92,7 +92,7 @@ class LayerwiseModelFinetuning(Algorithm):
             self._samples_indices_pool = random.sample(
                 range(self._optimization_dataset_size), self._tconf['calibration_indices_pool'])
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         raise NotImplementedError
 
     def _collect_nodes_to_tune(self, modified_model):
@@ -350,7 +350,7 @@ class LayerwiseModelFinetuning(Algorithm):
 
         return fp_model_callbacks, modified_model_callbacks
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         self.algo_collector = stats_collector
 
     def _check_batch_size(self):

@@ -40,10 +40,11 @@ class QuantNoiseEstimator(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function calculates quantization noise stats
-         :param model: model to apply algo
-         """
+        :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
+        """
         noise_estimation_modes = {
             'full_fq_noise': self.full_fq_noise_stats,
             'layerwise_fq_noise': self.layerwise_fq_noise,
@@ -51,7 +52,7 @@ class QuantNoiseEstimator(Algorithm):
         noise_estimation_modes[self._config['mode']](model)
         return model
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         pass
 
     def full_fq_noise_stats(self, model):

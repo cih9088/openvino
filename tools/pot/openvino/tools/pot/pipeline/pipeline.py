@@ -4,6 +4,7 @@
 from openvino.tools.mo.utils.version import get_version as get_mo_version
 
 from ..algorithms.algorithm import Algorithm
+from ..debuggers.utils import get_debuggers_by_target
 from ..statistics.collector import collect_statistics
 from ..utils.logger import get_logger
 from ..utils.utils import get_ie_version
@@ -30,9 +31,10 @@ class Pipeline:
         self._algo_seq.append(algo)
         self._validate()
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ Execute sequence of algorithm
         :param model: initial model
+        :param debuggers: debuggers
         :return model after applying all added algorithms
         """
         logger.info(f'Inference Engine version:                {get_ie_version()}')
@@ -42,24 +44,31 @@ class Pipeline:
         self.set_max_algorithms_steps(model)
         logger.reset_progress_total(self._algorithms_steps, self.default_steps_size)
 
+        if not isinstance(debuggers, list):
+            debuggers = [debuggers]
+        assert debuggers and self._engine._stat_requests_number == 1, (
+            "To use debugger, Please set 'stat_requests_number' in engine config to 1."
+        )
+
         for algo in self._algo_seq:
             current_algo_seq.append(algo)
 
             if algo.change_original_model:
-                model = self.collect_statistics_and_run(model, current_algo_seq)
+                model = self.collect_statistics_and_run(model, current_algo_seq, debuggers)
                 current_algo_seq = []
 
-        result = self.collect_statistics_and_run(model, current_algo_seq)
+        result = self.collect_statistics_and_run(model, current_algo_seq, debuggers)
         logger.update_progress(self._algorithms_steps)
         return result
 
-    def collect_statistics_and_run(self, model, algo_seq):
+    def collect_statistics_and_run(self, model, algo_seq, debuggers=[]):
         # Collect statistics for activations
-        collect_statistics(self._engine, model, algo_seq)
+        collect_statistics(self._engine, model, algo_seq, debuggers)
 
         for algo in algo_seq:
+            debuggers_ = get_debuggers_by_target(algo.name, debuggers)
             logger.info('Start algorithm: {}'.format(algo.name))
-            model = algo.run(model)
+            model = algo.run(model, debuggers=debuggers_)
             logger.info('Finished: {}\n {}'.format(algo.name, '=' * 75))
         return model
 

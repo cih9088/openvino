@@ -34,11 +34,12 @@ class Ranger(Algorithm):
             engine, stat_subset_size, shuffle_data, seed, stat_batch_size)
         self._act_types = ['ReLU', 'Swish', 'PReLU', 'Elu', 'Gelu', 'Sigmoid', 'Tanh']
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies the clamp insertion algorithm
-         :param model: model to apply algo
-         :return model with inserted clamp nodes before convolutions with min-max from stats
-         """
+        :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
+        :return model with inserted clamp nodes before convolutions with min-max from stats
+        """
         activation_statistics = self._stats_collector.get_statistics_for_algorithm(self.name)
 
         act_nodes = mu.get_nodes_by_type(model, self._act_types)
@@ -61,7 +62,7 @@ class Ranger(Algorithm):
                 dest_port.connect(clamp_node.out_port(0))
         return model
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         self._stats_collector = stats_collector
         act_nodes = mu.get_nodes_by_type(model, self._act_types)
         stats_layout = {}

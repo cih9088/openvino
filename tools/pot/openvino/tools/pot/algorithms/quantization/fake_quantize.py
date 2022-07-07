@@ -223,6 +223,10 @@ def get_fake_quantize_first_output(fake_quantize):
     return get_node_output(fake_quantize, 0)[0]
 
 
+def get_fake_quantize_parameters(fake_quantize):
+    return list(map(get_node_value, get_node_inputs(fake_quantize)[1:]))
+
+
 def fix_zero_filters_symmetric(max_level, eps=0.01):
     max_range = np.max(max_level)
     lower_threshold = np.maximum(8e-5, eps * max_range)

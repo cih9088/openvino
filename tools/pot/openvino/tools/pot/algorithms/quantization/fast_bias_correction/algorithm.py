@@ -47,11 +47,12 @@ class FastBiasCorrection(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies the bias correction algorithm
-         :param model: model to apply algo
-         :return with corrected biases for layers with bias
-         """
+        :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
+        :return with corrected biases for layers with bias
+        """
         mu.nx_type_infer(model)
         activations_statistics = self._stats_collector.get_statistics_for_algorithm(self.name)
         nodes_with_bias = mu.get_nodes_by_type(model, [op['type'] for op in OPERATIONS_WITH_BIAS])
@@ -117,7 +118,7 @@ class FastBiasCorrection(Algorithm):
                 logger.debug('{} skipped by threshold'.format(op_node.fullname))
         return model
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         model = deepcopy(model)
         fqut.insert_fake_quantize_nodes(self._config, model)
         activation_statistics_layout = self.get_activations_statistics_layout(model)

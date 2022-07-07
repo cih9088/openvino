@@ -39,7 +39,7 @@ class WeightSparsity(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         self.algo_pipeline.run(model)
         logger.info('\n' + self.algo_pipeline.statistics_table.draw())
         return model

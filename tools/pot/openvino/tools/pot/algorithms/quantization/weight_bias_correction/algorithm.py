@@ -26,7 +26,7 @@ class WeightBiasCorrection(Algorithm):
         super().__init__(config, engine)
         self._safety_eps_variance_factor = float(self._config.get('eps_factor', 1e-5))
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ Runs weight bias correction algorithm on all operations containing
             quantized weights
         """

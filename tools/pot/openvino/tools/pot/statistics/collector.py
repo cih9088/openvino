@@ -4,6 +4,7 @@
 from copy import copy
 
 from .utils import merge_algos_by_samplers, merge_stats_by_algo_names
+from ..debuggers.utils import get_debuggers_by_target
 from ..samplers.sampler import Sampler
 from ..utils.logger import get_logger
 
@@ -120,13 +121,14 @@ class StatisticsCollector:
                 accumulated_stats[layer_name] = stats[node_name]
 
 
-def collect_statistics(engine, model, algo_seq):
+def collect_statistics(engine, model, algo_seq, debuggers=[]):
     """
     1. Register all algorithms stats layouts
     2. Run statistics computing
     :param engine: instance of a class inherited from Engine interface
     :param model: NetworkX model
     :param algo_seq: sequence of classes inherited from Algorithm interface
+    :param debugger: debugger
     :return: None
     """
     if not algo_seq:
@@ -137,7 +139,8 @@ def collect_statistics(engine, model, algo_seq):
     stats_collector = StatisticsCollector(engine)
 
     for algo in algo_seq:
-        algo.register_statistics(model, stats_collector)
+        debuggers_ = get_debuggers_by_target(algo.name, debuggers)
+        algo.register_statistics(model, stats_collector, debuggers=debuggers_)
 
     stats_collector.compute_statistics(model)
     logger.info('Computing statistics finished')

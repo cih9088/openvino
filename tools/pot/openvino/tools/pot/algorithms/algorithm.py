@@ -14,10 +14,10 @@ class Algorithm(ABC):
 
     def __init__(self, config, engine: Engine):
         """ Constructor
-         :param config: algorithm specific config
-         :param engine: model inference engine
-         :param sampler: Sampler class inheritor instance to read dataset
-          """
+        :param config: algorithm specific config
+        :param engine: model inference engine
+        :param sampler: Sampler class inheritor instance to read dataset
+        """
         self._config, self._engine = deepcopy(config), engine
         self._stats_collector = None
         self.params = {}
@@ -40,20 +40,22 @@ class Algorithm(ABC):
         self._stats_collector = collector
 
     @abstractmethod
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ Run algorithm on model
         :param model: model to apply algorithm
+        :param debuggers: a list of debugger for this algorithm
         :return optimized model
-         """
+        """
 
     def statistics(self):
         """ Returns a dictionary of printable statistics"""
         return {}
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         """
         :param model: FP32 original model
         :param stats_collector: object of StatisticsCollector class
+        :param debuggers: a list of debugger for this algorithm
         :return: None
         """
 

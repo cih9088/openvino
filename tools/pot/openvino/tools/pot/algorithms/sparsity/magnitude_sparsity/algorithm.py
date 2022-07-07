@@ -32,7 +32,7 @@ class MagnitudeSparsity(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         sparsity_level = self._config.sparsity_level
         normalize_before_sparse = (
             self._config.normed_threshold is not False

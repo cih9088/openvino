@@ -31,7 +31,7 @@ class BaseWeightSparsity(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         bias_correction = self.algorithms[1]
         collect_statistics(self._engine, model, [bias_correction])
 

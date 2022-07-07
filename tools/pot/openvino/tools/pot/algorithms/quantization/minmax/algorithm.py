@@ -41,12 +41,18 @@ class MinMaxQuantization(Algorithm):
     def change_original_model(self):
         return False
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies quantization algorithm
-         :param model: model to apply algo
-         :return model with inserted and filled FakeQuantize nodes
-         """
+        :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
+        :return model with inserted and filled FakeQuantize nodes
+        """
         activation_statistics = self._stats_collector.get_statistics_for_algorithm(self.name)
+
+        debugger = self._get_debugger("MinMaxQuantizationDebugger", debuggers)
+        if debugger:
+            debugger.original_stats = activation_statistics
+
         model = fqut.get_quantized_model(model,
                                          self.create_stats_layout,
                                          activation_statistics,
@@ -57,15 +63,30 @@ class MinMaxQuantization(Algorithm):
             save_model(model,
                        os.path.join(self._config.get('exec_log_dir'), 'optimized'),
                        model_name=model.name)
+        if debugger:
+            debugger.run(model, self._sampler)
         return model
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         model = deepcopy(model)
         fqut.insert_fake_quantize_nodes(self._config, model)
         activation_statistics_layout = self.__get_activations_statistics_layout(model)
+
+        debugger = self._get_debugger("MinMaxQuantizationDebugger", debuggers)
+        if debugger:
+            fake_quantize_config = fqut.compute_stats_layouts(self._config, model)
+            debugger.fake_quantize_config = fake_quantize_config
+            activation_statistics_layout = debugger._augment_stats_layout(activation_statistics_layout)
+
         layers_mapping = fqut.create_renamed_layers_mapping(model, activation_statistics_layout)
         stats_collector.register(self.name, activation_statistics_layout, self._sampler, layers_mapping)
         self._stats_collector = stats_collector
+
+    def _get_debugger(self, name, debuggers=[]):
+        for debugger in debuggers:
+            if debugger.name == name:
+                return debugger
+        return []
 
     def __get_activations_statistics_layout(self, model):
         """

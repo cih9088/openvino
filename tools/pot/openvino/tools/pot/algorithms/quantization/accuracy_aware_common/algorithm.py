@@ -100,7 +100,7 @@ class AccuracyAwareCommon(Algorithm):
     def change_original_model(self):
         return True
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         self._stats_collector = stats_collector
         self._quantization_algo.register_statistics(model, stats_collector)
         if self._config.convert_to_mixed_preset:
@@ -108,10 +108,11 @@ class AccuracyAwareCommon(Algorithm):
         if self._config.tune_hyperparams:
             self._grid_search_algo.register_statistics(model, stats_collector)
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies the accuracy aware
             quantization scope search algorithm
          :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
          :return model with modified quantization scope to match
                  required accuracy values
          """

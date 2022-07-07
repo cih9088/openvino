@@ -36,11 +36,12 @@ class OverflowCorrection(Algorithm):
         self._sampler = create_sampler(
             engine, stat_subset_size, shuffle_data, seed, stat_batch_size)
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies the overflow correction algorithm
-         :param model: model to apply algo
-         :return model with corrected scales & weights to prevent overflow for INT ranges
-         """
+        :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
+        :return model with corrected scales & weights to prevent overflow for INT ranges
+        """
         activation_statistics = self._stats_collector.get_statistics_for_algorithm(self.name)
 
         weighted_nodes = mu.get_nodes_by_type(model, [n['type'] for n in OPERATIONS_WITH_WEIGHTS])
@@ -66,7 +67,7 @@ class OverflowCorrection(Algorithm):
                              'updated with scale coefficient: {}'.format(weighted_node.fullname, rescale_value))
         return model
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         self._stats_collector = stats_collector
         conv_nodes = mu.get_nodes_by_type(model, [n['type'] for n in OPERATIONS_WITH_WEIGHTS])
         stats_layout = {}

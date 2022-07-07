@@ -40,6 +40,11 @@ def calculate_per_tensor_stats(acts, fn):
     return fn(t, axis=1)
 
 
+@compute_act_stats_fn_per_tensor.register('identity')
+def identity_per_tensor(acts, **_):
+    return acts
+
+
 @compute_act_stats_fn_per_tensor.register('max')
 def max_per_tensor(acts, **_):
     return calculate_per_tensor_stats(acts, np.max)

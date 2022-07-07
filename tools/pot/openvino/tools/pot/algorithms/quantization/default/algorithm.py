@@ -10,6 +10,7 @@ from ..overflow_correction.algorithm import OverflowCorrection
 from ..minmax.algorithm import MinMaxQuantization
 from ...algorithm import Algorithm
 from ...algorithm_selector import COMPRESSION_ALGORITHMS
+from ....debuggers.utils import get_debuggers_by_target
 from ....samplers.creator import create_sampler
 from ....statistics.collector import StatisticsCollector
 from ....utils.logger import get_logger
@@ -59,9 +60,10 @@ class DefaultQuantization(Algorithm):
             engine, stat_subset_size, shuffle_data, seed, stat_batch_size)
         self._stats_collected = False
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ This function applies quantization algorithm
          :param model: model to apply algo
+         :param debuggers: a list of debugger for this algorithm
          :return model with inserted and filled FakeQuantize nodes
          """
         if self._enable_tuning:
@@ -80,7 +82,8 @@ class DefaultQuantization(Algorithm):
             logger.info('Computing statistics finished')
 
         # Run ActivationChannelAlignment
-        model = self.algorithms[0].run(model)
+        debuggers_ = get_debuggers_by_target(self.algorithms[0].name, debuggers)
+        model = self.algorithms[0].run(model, debuggers=debuggers_)
 
         # Collect stats for MinMaxQuantization, one of BiasCorrection algo
         if not self._stats_collected:
@@ -92,7 +95,8 @@ class DefaultQuantization(Algorithm):
 
         for algo in self.algorithms[1:]:
             algo.default_steps_size = self.default_steps_size
-            model = algo.run(model)
+            debuggers_ = get_debuggers_by_target(algo.name, debuggers)
+            model = algo.run(model, debuggers=debuggers_)
         logger.update_progress(self.default_steps_size)
         return model
 
@@ -116,16 +120,18 @@ class DefaultQuantization(Algorithm):
             algo.algo_collector = minmax_bc_collector
             algo.update_config(config)
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         if self.algorithms[0].algo_collector is not None:
             channel_alignment_collector = self.algorithms[0].algo_collector
         else:
             channel_alignment_collector = StatisticsCollector(self._engine)
-        self.algorithms[0].register_statistics(model, channel_alignment_collector)
+        debuggers_ = get_debuggers_by_target(self.algorithms[0].name, debuggers)
+        self.algorithms[0].register_statistics(model, channel_alignment_collector, debuggers=debuggers_)
 
         if self.algorithms[1].algo_collector is not None:
             minmax_bc_collector = self.algorithms[1].algo_collector
         else:
             minmax_bc_collector = StatisticsCollector(self._engine)
         for algo in self.algorithms[1:]:
-            algo.register_statistics(model, minmax_bc_collector)
+            debuggers_ = get_debuggers_by_target(algo.name, debuggers)
+            algo.register_statistics(model, minmax_bc_collector, debuggers=debuggers_)

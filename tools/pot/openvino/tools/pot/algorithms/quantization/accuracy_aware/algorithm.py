@@ -31,18 +31,20 @@ class AccuracyAwareQuantization(Algorithm):
     def __getattr__(self, item):
         return getattr(self._accuracy_aware_algo, item)
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         """
         :param model: FP32 original model
         :param stats_collector: object of StatisticsCollector class
+        :param debuggers: a list of debugger for this algorithm
         :return: None
         """
         self._accuracy_aware_algo.register_statistics(model, stats_collector)
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies the accuracy aware
             quantization scope search algorithm
          :param model: model to apply algo
+        :param debuggers: a list of debugger for this algorithm
          :return model with modified quantization scope to match
                  required accuracy values
          """

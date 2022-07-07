@@ -41,9 +41,10 @@ class ActivationChannelAlignment(Algorithm):
     def change_original_model(self):
         return True
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies activation range alignment procedure
          :param model: model to apply the algo on
+         :param debuggers: a list of debugger for this algorithm
          :return range-corrected model
          """
 
@@ -63,7 +64,7 @@ class ActivationChannelAlignment(Algorithm):
 
         return model
 
-    def register_statistics(self, model, stats_collector):
+    def register_statistics(self, model, stats_collector, debuggers=[]):
         model = deepcopy(model)
         activation_statistics_layout = self.get_activations_statistics_layout(model)
         stats_collector.register(self.name, activation_statistics_layout, self._sampler)

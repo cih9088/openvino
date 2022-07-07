@@ -25,11 +25,12 @@ class OutlierChannelSplitting(Algorithm):
         super().__init__(config, engine)
         self.weights_expansion_ratio = config.get('weights_expansion_ratio', 0.01)
 
-    def run(self, model):
+    def run(self, model, debuggers=[]):
         """ this function applies outlier channel splitting procedure
-         :param model: model to apply the algorithm on
-         :return result model
-         """
+        :param model: model to apply the algorithm on
+        :param debuggers: a list of debugger for this algorithm
+        :return result model
+        """
         conv_nodes_list = self.get_conv_nodes(model)
 
         for conv_node in conv_nodes_list:
