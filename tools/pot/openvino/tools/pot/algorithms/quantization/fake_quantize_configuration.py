@@ -6,12 +6,14 @@ from copy import deepcopy
 
 from .range_estimator import get_range_estimator_config
 from .utils import get_hardware_config_operation_type, load_hardware_config
+from ...graph import editor as ge
 from ...graph.special_operations import QUANTIZE_AGNOSTIC_OPERATIONS, CONCAT_UNIFY_OUTPUTS, \
     CONCAT_UNIFY_INPUTS, RECURRENT_OPERATIONS
 from ...graph.utils import find_operation_matches, get_operation_list, is_data_type_quantizable
 from ...graph.model_utils import get_nodes_by_type, get_node_by_name
 from ...graph.node_utils import get_input_shape, get_all_node_outputs,\
-get_node_input, get_node_inputs, get_node_data_type, check_const_input
+    get_node_input, get_node_inputs, get_node_data_type, check_const_input, \
+    get_mapped_node_in_subgraph
 
 from ...utils.logger import get_logger
 
@@ -281,20 +283,17 @@ def get_configurations_by_qscheme(fq_to_hw_confs, qscheme):
 
 
 def find_fqs_to_unify(model, config):
-    def _get_unified_scales_ops(hw_ops_):
-        unified_scales_ops_ = []
+    def _get_ops_with_attribute(hw_ops_, att_name):
+        ops_with_attr_ = dict()
         for hw_op in hw_ops_:
-            if 'attributes' in hw_op and 'scales' in hw_op['attributes']:
-                scales = hw_op["attributes"].pop("scales")
+            if 'attributes' in hw_op and att_name in hw_op['attributes']:
+                attribute = hw_op["attributes"].pop(att_name)
                 if not hw_op["attributes"]:
                     del hw_op["attributes"]
 
-                hw_op = deepcopy(hw_op)
-                if isinstance(scales, dict):
-                    hw_op["scales"] = scales["unified"]
-
-                unified_scales_ops_.append(hw_op)
-        return unified_scales_ops_
+                type = hw_op["type"]
+                ops_with_attr_[type] = attribute
+        return ops_with_attr_
 
     def _is_special_unify_conditions(node):
         check_map = {
@@ -346,29 +345,77 @@ def find_fqs_to_unify(model, config):
     def _is_recurrent_ops(layer):
         return layer.type in [op['type'] for op in RECURRENT_OPERATIONS]
 
-    def _process_node(node_, stack_, visited_, to_unify_, scales_):
+    def _is_valid_unify(to_unify):
+        if (
+            to_unify[0]
+            and any(
+                [
+                    _is_unified_scales_op(
+                        get_node_by_name(model, bridge, recursively=True)
+                    )
+                    for bridge in to_unify[0]
+                ]
+            )
+            and len(to_unify[1]) > 1
+        ):
+            return True
+
+    def _find_target_node(fq):
+        if fq.type == "FakeQuantize":
+            candidate = get_all_node_outputs(fq)[0]
+            for port_idx, port in candidate.in_ports().items():
+                if port.get_source().node == fq:
+                    break
+            while _is_quantize_agnostic_op(candidate):
+                new_candidate = get_all_node_outputs(candidate)[0]
+                for port_idx, port in new_candidate.in_ports().items():
+                    if port.get_source().node == candidate:
+                        break
+                candidate = new_candidate
+            return candidate, port_idx
+        else:
+            return fq, None
+
+    def _find_consecutive_node(node, target_type):
+        candidates = get_all_node_outputs(node)
+        for candidate in candidates:
+            if _is_quantize_agnostic_op(candidate) or (
+                candidate.kind == "op" and candidate.type == "FakeQuantize"
+            ):
+                candidates.extend(get_all_node_outputs(candidate))
+            if candidate.type == target_type:
+                return candidate
+        return None
+
+    def _find_fq(node, port):
+        node = get_node_input(node, port)
+        while node.type != "FakeQuantize":
+            node = get_node_input(node, 0)
+            if not _is_quantize_agnostic_op(node):
+                break
+        return node if node.type == "FakeQuantize" else None
+
+    def _get_subsequent_node_by_types(query_node, types):
+        next_candidates = [(i, query_node) for i in get_all_node_outputs(query_node)]
+        for cur_node, prev_node in next_candidates:
+            if _is_quantize_agnostic_op(cur_node):
+                next_candidates.extend([(i, cur_node) for i in get_all_node_outputs(cur_node)])
+                continue
+            if cur_node.kind == "op" and cur_node.type in types:
+                return cur_node, prev_node
+        return None, None
+
+    def _process_node(node_, stack_, visited_, to_unify_, scale_config_):
         visited_[node_.fullname][0] = True
         if _is_unified_scales_op(node_) or _is_agnostic_branching_op(node_):
             if (not _has_const_input(node_) or _is_recurrent_ops(node)) and node_.fullname not in to_unify[0]:
                 to_unify_[0].append(node_.fullname)
         elif node_.type == 'FakeQuantize':
-            target_node = get_all_node_outputs(node_)[0]
-            while _is_quantize_agnostic_op(target_node):
-                target_node = get_all_node_outputs(target_node)[0]
-            if get_node_input(node_, 0).type != 'Const' or target_node.type in scales_:
-                cur = len(to_unify_[1])
-                candidates = [(node_, i) for i in get_all_node_outputs(node_)]
-                for ptr, candidate in candidates:
-                    if _is_quantize_agnostic_op(candidate):
-                        candidates.extend([(candidate, i) for i in get_all_node_outputs(candidate)])
-                        continue
-                    for port_idx, port in candidate.in_ports().items():
-                        candidate_node_ = port.get_source().node
-                        if candidate_node_ == ptr:
-                            to_unify_[1].append((node_.fullname, port_idx))
-                            break
-                    if cur != len(to_unify_[1]):
-                        break
+            target_node, in_port_idx = _find_target_node(node_)
+            if target_node.type in scale_config_:
+                to_unify_[1].append((node_.fullname, in_port_idx))
+            elif get_node_input(node_, 0).type != 'Const':
+                to_unify_[1].append((node_.fullname, in_port_idx))
         # traverse down
         if node_.type == 'FakeQuantize' or _is_quantize_agnostic_op(node_):
             for child in get_all_node_outputs(node_):
@@ -382,12 +429,12 @@ def find_fqs_to_unify(model, config):
                 node_data_type = get_node_data_type(parent)
                 if parent and not all(visited_[parent.fullname]) and is_data_type_quantizable(node_data_type) and \
                         (parent.type == 'FakeQuantize' or _is_quantize_agnostic_op(parent)):
-                    if node_.type in scales_:
+                    if node_.type in scale_config_:
                         if len(visited[node_.fullname]) == 1:
-                            visited[node_.fullname] = visited[node_.fullname] + [False] * len(scales_[node_.type])
-
+                            visited[node_.fullname] = \
+                                visited[node_.fullname] + [False] * len(scale_config_[node_.type])
                         unify_port_idx = to_unify_[1][-1][1]
-                        for idx, scale in enumerate(scales_[node_.type]):
+                        for idx, scale in enumerate(scale_config_[node_.type]):
                             if unify_port_idx in scale and port_idx in scale:
                                 if len(to_unify_[1]) == len(scale) - 1:
                                     visited[node_.fullname][idx + 1] = True
@@ -395,36 +442,154 @@ def find_fqs_to_unify(model, config):
                     else:
                         stack_.append(parent)
 
+    def _process_consecutive_node(node_, to_unify_, scale_config_):
+        if isinstance(node_, tuple):
+            target_node, in_port_idx = node_
+            is_in_same_graph = False
+        elif node_.type == "FakeQuantize":
+            target_node, in_port_idx = _find_target_node(node_)
+            if target_node.type not in scale_config_:
+                return
+            is_in_same_graph = True
+        else:
+            return
+
+        for consecutive_type in scale_config_.keys():
+            consecutive_node = _find_consecutive_node(target_node, consecutive_type)
+            if consecutive_node is None:
+                continue
+            target_ports, consecutive_ports = scale_config_[consecutive_type]
+            if in_port_idx not in target_ports:
+                continue
+
+            if consecutive_node not in to_unify_[0]:
+                to_unify_[0].append(consecutive_node.fullname)
+            for consecutive_port in consecutive_ports:
+                fq = _find_fq(consecutive_node, consecutive_port)
+                to_unify_[1].append((fq.fullname, consecutive_port))
+
+            if is_in_same_graph:
+                if target_node not in to_unify_[0]:
+                    to_unify_[0].append(target_node.fullname)
+                for target_port in target_ports:
+                    fq = _find_fq(target_node, target_port)
+                    to_unify_[1].append((fq.fullname, target_port))
+
+    if model is None:
+        return []
+
     hardware_config = load_hardware_config(config)
     hw_ops = get_operation_list(hardware_config)
     quantize_agnostic_ops = [op[1] for op in find_operation_matches(QUANTIZE_AGNOSTIC_OPERATIONS, hw_ops)]
-    unified_scales_ops = _get_unified_scales_ops(hw_ops)
-    unified_scales_ops_dict = {op['type']: op['scales'] for op in unified_scales_ops if 'scales' in op}
-    if not unified_scales_ops:
-        return []
 
-    visited = defaultdict(lambda: [False])
+    unified_scales_ops_dict = _get_ops_with_attribute(hw_ops, "scales_unified")
+    unified_scales_ops = [{"type": k} for k in unified_scales_ops_dict.keys()]
+    for k in list(unified_scales_ops_dict.keys()):
+        if unified_scales_ops_dict[k] == "unified":
+            unified_scales_ops_dict.pop(k)
+
     fqs_to_unify = []
-    if model is None:
-        return fqs_to_unify
-    for fq in get_nodes_by_type(model, ['FakeQuantize'], recursively=True):
+    if unified_scales_ops:
+        visited = defaultdict(lambda: [False])
+        for fq in get_nodes_by_type(model, ['FakeQuantize'], recursively=True):
+            target_node, _ = _find_target_node(fq)
+            if not all(visited[fq.fullname]) and \
+                    (get_node_input(fq, 0).type != 'Const' or target_node.type in unified_scales_ops_dict):
+                stack = [fq]
+                to_unify = [[], []]
+                while stack:
+                    node = stack.pop()
+                    _process_node(node, stack, visited, to_unify, unified_scales_ops_dict)
 
-        target_node = get_all_node_outputs(fq)[0]
-        while _is_quantize_agnostic_op(target_node):
-            target_node = get_all_node_outputs(target_node)[0]
+                if _is_valid_unify(to_unify):
+                    fqs_to_unify.append([to_unify[0], [name for (name, _) in to_unify[1]]])
 
-        if not all(visited[fq.fullname]) and \
-                (get_node_input(fq, 0).type != 'Const' or target_node.type in unified_scales_ops_dict):
-            stack = [fq]
-            to_unify = [[], []]
-            while stack:
-                node = stack.pop()
-                _process_node(node, stack, visited, to_unify, unified_scales_ops_dict)
+    consecutive_unified_scales_ops_dict = _get_ops_with_attribute(
+        hw_ops, "consecutive_scales_unified"
+    )
+    if consecutive_unified_scales_ops_dict:
+        types_with_subgraph = ["TensorIterator"]
+        fqs_to_consecutive_unify = []
+        for sub_model in model.models:
+            graph = sub_model["model"]
+            for fq in ge.get_nodes_by_type(graph, ["FakeQuantize"], recursively=True):
+                target_node, target_in_port_idx = _find_target_node(fq)
+                if target_node.type in consecutive_unified_scales_ops_dict:
+                    scale_config = consecutive_unified_scales_ops_dict[target_node.type]
+                    to_unify = [[], []]
+                    _process_consecutive_node(fq, to_unify, scale_config)
 
-            if to_unify[0] and \
-                    any([_is_unified_scales_op(get_node_by_name(model, bridge, recursively=True)) for bridge in to_unify[0]]) and \
-                    len(to_unify[1]) > 1:
-                fqs_to_unify.append([to_unify[0], [name for (name, _) in to_unify[1]]])
+                    # not found and fq is in subgraph
+                    if not to_unify[0] and not to_unify[1] and graph != target_node.graph:
+                        # get node with subgraph where target_node is in
+                        node_with_subgraph = ge.get_node_with_subgraph_by_node(
+                            graph, target_node
+                        )
+                        _process_consecutive_node(
+                            (node_with_subgraph, target_in_port_idx), to_unify, scale_config
+                        )
+                        # found in main graph
+                        if to_unify[0] and to_unify[1]:
+                            to_unify[0].append(target_node.fullname)
+                            to_unify[1].append((fq.fullname, target_in_port_idx))
+                        else:
+                            # get subsequent node
+                            next_node_with_subgraph, input_node = _get_subsequent_node_by_types(
+                                node_with_subgraph,
+                                types_with_subgraph
+                            )
+                            if input_node is None and next_node_with_subgraph is None:
+                                continue
+
+                            if next_node_with_subgraph.type == "TensorIterator":
+                                node_in_ti = get_mapped_node_in_subgraph(
+                                    next_node_with_subgraph, input_node
+                                )
+                            else:
+                                raise NotImplementedError
+                            _process_consecutive_node(
+                                (node_in_ti, target_in_port_idx), to_unify, scale_config
+                            )
+                            # found in the next tensoriterator
+                            if to_unify[0] and to_unify[1]:
+                                to_unify[0].append(target_node.fullname)
+                                to_unify[1].append((fq.fullname, target_in_port_idx))
+
+                    if _is_valid_unify(to_unify):
+                        to_unify = [to_unify[0], [name for (name, _) in to_unify[1]]]
+
+                        for item in fqs_to_consecutive_unify:
+                            if item[0] == to_unify[0]:
+                                item[1] = list(set(item[1]).union(set(to_unify.pop(1))))
+                                break
+                            elif set(item[1]).intersection(set(to_unify[1])):
+                                item[1] = list(set(item[1]).union(set(to_unify.pop(1))))
+                                item[0] = list(set(item[0]).union(set(to_unify.pop(0))))
+                                break
+                        if len(to_unify) > 1:
+                            fqs_to_consecutive_unify.append(to_unify)
+        # concat fqs to unify
+        temp = []
+        for consecutive_bridges, consecutive_fqs in fqs_to_consecutive_unify:
+            indices = set()
+            for consecutive_fq in consecutive_fqs:
+                for idx, (_, fqs) in enumerate(fqs_to_unify):
+                    if consecutive_fq in fqs:
+                        indices.add(idx)
+            if indices:
+                indices = sorted(list(indices), reverse=True)
+                bridges = set()
+                fqs = set()
+                for idx in indices:
+                    bridge, fq = fqs_to_unify.pop(idx)
+                    bridges.update(bridge)
+                    fqs.update(fq)
+                bridges.update(consecutive_bridges)
+                fqs.update(consecutive_fqs)
+                temp.append([list(bridges), list(fqs)])
+            else:
+                temp.append([consecutive_bridges, consecutive_fqs])
+        fqs_to_unify.extend(temp)
 
     fqs_to_unify = sorted([[sorted(c[0]), sorted(c[1])] for c in fqs_to_unify])
     logger.debug('Operations and corresponding fake quantize nodes to unify scales:')

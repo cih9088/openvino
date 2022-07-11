@@ -142,6 +142,17 @@ def get_nodes_by_type(graph: Graph, types: list, recursively: bool = False) -> l
     return nodes
 
 
+def get_node_with_subgraph_by_node(graph, node_in_subgraph: Node):
+    if graph == node_in_subgraph.graph:
+        return None
+    for node in get_nodes_by_type(
+        graph, ["TensorIterator", "Loop"], recursively=False,
+    ):
+        if node.body == node_in_subgraph.graph:
+            return node
+    return None
+
+
 def add_fullname_for_nodes(graph: Graph):
     def set_fullname(graph, subgraphs=None):
         if subgraphs is None:

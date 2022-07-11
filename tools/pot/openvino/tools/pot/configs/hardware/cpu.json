@@ -225,14 +225,15 @@
         {
             "type": "Concat",
             "attributes": {
-                "scales": "unified"
+                "scales_unified": "unified"
             }
         },
         {
             "type": "LSTMCell",
             "attributes": {
-                "scales": {
-                  "unified": [[0, 1], [3, 4]]
+                "scales_unified": [[0, 1], [3, 4]],
+                "consecutive_scales_unified": {
+                    "LSTMCell": [[0, 1], [0, 1]]
                 }
             },
             "quantization": {

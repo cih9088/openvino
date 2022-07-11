@@ -4,6 +4,8 @@
 import numpy as np
 from openvino.tools.mo.graph.graph import Node
 
+from . import editor as ge
+
 
 def get_node_inputs(node: Node):
     """
@@ -231,6 +233,50 @@ def get_first_convolutions(parameter_nodes):
                            if node.type != 'Convolution']
         parameter_nodes = {node for node_list in parameter_nodes for node in node_list}
     return first_convolutions
+
+
+def get_mapped_node_in_subgraph(node_with_subgraph: Node, query_node: Node):
+    """
+    Return node in subgraph directly mapped withqurey node
+    :param node_with_subgraph: node including subgraph.
+    :param query_node: node with next node is 'node_with_subgraph' or
+        node with before node is 'node_with_subgraph'
+    :return: node in subgraph corresponding 'query_node'
+    """
+    assert node_with_subgraph.type in ["TensorIterator", "Loop"]
+
+    # is "query_node" is input to subgraph
+    for in_port_idx, port in node_with_subgraph.in_ports().items():
+        if query_node == port.get_source().node:
+            target_internal_layer_id = None
+            for port_map in node_with_subgraph.attrs()['input_port_map']:
+                if port_map["external_port_id"] == in_port_idx:
+                    target_internal_layer_id = port_map["internal_layer_id"]
+                    break
+            if target_internal_layer_id:
+                for node_name, node_attrs in node_with_subgraph.body.nodes(data=True):
+                    if "internal_layer_id" in node_attrs:
+                        layer_id = node_attrs["internal_layer_id"]
+                        if layer_id == target_internal_layer_id:
+                            return ge.get_node_by_name(node_with_subgraph.body, node_name)
+
+    # is "query_node" is output from subgraph
+    for out_port_idx, port in node_with_subgraph.out_ports().items():
+        if query_node == port.get_source().node:
+            target_internal_layer_id = None
+            for port_map in node_with_subgraph.attrs()['output_port_map']:
+                if port_map["external_port_id"] == out_port_idx:
+                    target_internal_layer_id = port_map["internal_layer_id"]
+                    break
+            if target_internal_layer_id:
+                for node_name, node_attrs in node_with_subgraph.body.nodes(data=True):
+                    if "internal_layer_id" in node_attrs:
+                        layer_id = node_attrs["internal_layer_id"]
+                        if layer_id == target_internal_layer_id:
+                            return ge.get_node_by_name(node_with_subgraph.body, node_name)
+
+    # query_node is not directly connected to "node_with_subgraph"
+    return None
 
 
 def check_const_input(node):
