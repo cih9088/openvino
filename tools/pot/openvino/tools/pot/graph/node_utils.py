@@ -262,10 +262,18 @@ def get_mapped_node_in_subgraph(node_with_subgraph: Node, query_node: Node):
 
     # is "query_node" is output from subgraph
     for out_port_idx, port in node_with_subgraph.out_ports().items():
-        if query_node == port.get_source().node:
+        # external_port_id is shifted for output_port_map
+        port_idx_offset = 0
+        external_port_ids = []
+        for port_map in node_with_subgraph.attrs()['output_port_map']:
+            external_port_ids.append(port_map["external_port_id"])
+        assert all(np.diff(np.array(external_port_ids)) == 1)
+        port_idx_offset = min(external_port_ids)
+
+        if query_node == port.get_destination().node:
             target_internal_layer_id = None
             for port_map in node_with_subgraph.attrs()['output_port_map']:
-                if port_map["external_port_id"] == out_port_idx:
+                if port_map["external_port_id"] - port_idx_offset == out_port_idx:
                     target_internal_layer_id = port_map["internal_layer_id"]
                     break
             if target_internal_layer_id:
@@ -277,6 +285,7 @@ def get_mapped_node_in_subgraph(node_with_subgraph: Node, query_node: Node):
 
     # query_node is not directly connected to "node_with_subgraph"
     return None
+
 
 
 def check_const_input(node):

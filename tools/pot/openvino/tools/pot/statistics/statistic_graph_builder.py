@@ -16,7 +16,9 @@ from openvino.tools.mo.ops.ReduceOps import ReduceMin, ReduceMax, ReduceMean
 from openvino.tools.mo.ops.activation_ops import Abs
 
 from ..graph.model_utils import get_node_by_name
-from ..graph.node_utils import get_output_shape, reset_node_fullname, convert_to_outputs_name
+from ..graph.node_utils import get_output_shape, reset_node_fullname, convert_to_outputs_name, \
+    get_node_inputs, get_mapped_node_in_subgraph
+from ..graph.editor import get_node_with_subgraph_by_node
 from ..statistics.statistics import Statistic, TensorStatistic, TensorStatisticAxis
 from ..statistics.function_selector import ACTIVATIONS, get_stats_function
 
@@ -24,15 +26,73 @@ from ..statistics.function_selector import ACTIVATIONS, get_stats_function
 # pylint: disable=R0912
 class StatisticGraphBuilder:
     def insert_statistic(self, model, stats_layout, stat_aliases=None):
+
+        def _add_output_to_model_graph(stat_aliases_=None):
+            if node_name in nodes_names_map[model_graph.name]:
+                del nodes_names_map[model_graph.name][node_name]
+
+            # Don't need adding extra output to the same node, but for another algo
+            if node_name_in_graph in output_to_node_names.values():
+                result_name = next((result for result, node in output_to_node_names.items()
+                                    if node == node_name_in_graph))
+                result_names = [result_name]
+            else:
+                original_node_name_in_graph = node_name_in_graph
+                if is_prefix_added:
+                    original_node_name_in_graph = node_name_in_graph.split('_', 1)[1]
+                model_graph.graph['additional_outputs'] = original_node_name_in_graph.split('|')
+                results = AddOutputRecursive().find_and_replace_pattern(model_graph)
+                result_names = [result.name for result in results]
+
+            if node_name in stats_layout:
+                stat = stats_layout.pop(node_name)
+                for result_name in result_names:
+                    stats_layout[result_name] = stat
+
+            if stat_aliases_ is not None:
+                stat_alias = stat_aliases_.pop(node_name)
+                for result_name in result_names:
+                    stat_aliases_[result_name] = stat_alias
+
+            for result_idx, result_name in enumerate(result_names):
+                if len(result_names) > 1:
+                    result = results[result_idx]
+                    node_with_subgraph = get_node_with_subgraph_by_node(
+                        model_graph, node
+                    )
+                    node_in_subgraph = get_mapped_node_in_subgraph(
+                        node_with_subgraph, result
+                    )
+                    candidates = [i for i in get_node_inputs(node_in_subgraph)]
+                    candidate = candidates.pop(0)
+
+                    out_port_idx = None
+                    while out_port_idx is None:
+                        for port_idx, port in candidate.in_ports().items():
+                            if port.get_source().node == node:
+                                out_port_idx = port.get_source().out
+                                break
+                        candidates.extend([i for i in get_node_inputs(candidate)])
+                    output_to_node_names[result_name] = node_name_in_graph + f".{out_port_idx}"
+                else:
+                    output_to_node_names[result_name] = node_name_in_graph
+
         output_to_node_names = {}
         is_prefix_added = len(model.models) > 1
         nodes_names_map = {m['model'].name: {} for m in model.models}
         if stat_aliases is None or model is None:
-            for node_name in stats_layout.keys():
+            for node_name in list(stats_layout.keys()):
                 node_name_in_graph = self.get_graph_node_name(node_name)
-                node = get_node_by_name(model, node_name_in_graph)
-                node_graph = node.graph
-                nodes_names_map[node_graph.name][node_name] = convert_to_outputs_name(node_name)
+
+                node = get_node_by_name(model, node_name_in_graph, recursively=True)
+                node_in_main_graph = get_node_by_name(model, node_name_in_graph.split('|')[0])
+                model_graph = node_in_main_graph.graph
+                nodes_names_map[model_graph.name][node_name] = convert_to_outputs_name(node_name)
+
+                # add output if node in subgraph
+                if model_graph != node.graph:
+                    _add_output_to_model_graph()
+
             return model, nodes_names_map, output_to_node_names
         copy_stat_aliases = deepcopy(stat_aliases)
         for algo_name, node_stats in copy_stat_aliases.items():
@@ -77,25 +137,7 @@ class StatisticGraphBuilder:
 
                 # add output if node in subgraph
                 if model_graph != node.graph:
-                    if node_name in nodes_names_map[model_graph.name]:
-                        del nodes_names_map[model_graph.name][node_name]
-
-                    # Don't need adding extra output to the same node, but for another algo
-                    if node_name_in_graph in output_to_node_names.values():
-                        result_name = next((result for result, node in output_to_node_names.items()
-                                            if node == node_name_in_graph))
-                    else:
-                        original_node_name_in_graph = node_name_in_graph
-                        if is_prefix_added:
-                            original_node_name_in_graph = node_name_in_graph.split('_', 1)[1]
-                        model_graph.graph['additional_outputs'] = original_node_name_in_graph.split('|')
-                        results = AddOutputRecursive().find_and_replace_pattern(model_graph)
-                        assert len(results) == 1
-                        result_name = results[0].name
-                    if node_name in stats_layout:
-                        stats_layout[result_name] = stats_layout.pop(node_name)
-                    stat_aliases[algo_name][result_name] = stat_aliases[algo_name].pop(node_name)
-                    output_to_node_names[result_name] = node_name_in_graph
+                    _add_output_to_model_graph(stat_aliases[algo_name])
 
         return model, nodes_names_map, output_to_node_names
 
@@ -186,3 +228,4 @@ class StatisticGraphBuilder:
     def get_out_port(node_name):
         out_port = node_name[1] if isinstance(node_name, tuple) else None
         return out_port
+
