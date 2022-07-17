@@ -128,7 +128,7 @@ def collect_statistics(engine, model, algo_seq, debuggers=[]):
     :param engine: instance of a class inherited from Engine interface
     :param model: NetworkX model
     :param algo_seq: sequence of classes inherited from Algorithm interface
-    :param debugger: debugger
+    :param debuggers: debuggers
     :return: None
     """
     if not algo_seq:

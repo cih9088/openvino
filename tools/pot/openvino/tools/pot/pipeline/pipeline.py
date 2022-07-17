@@ -46,9 +46,10 @@ class Pipeline:
 
         if not isinstance(debuggers, list):
             debuggers = [debuggers]
-        assert debuggers and self._engine._stat_requests_number == 1, (
-            "To use debugger, Please set 'stat_requests_number' in engine config to 1."
-        )
+        if debuggers:
+            assert self._engine._stat_requests_number == 1, (
+                "To use debugger, Please set 'stat_requests_number' in engine config to 1."
+            )
 
         for algo in self._algo_seq:
             current_algo_seq.append(algo)

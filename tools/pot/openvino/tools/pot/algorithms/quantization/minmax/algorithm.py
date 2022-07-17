@@ -16,6 +16,7 @@ from ....graph import node_utils as nu
 from ....graph.special_operations import TRANSPOSED_OPERATIONS
 from ....samplers.creator import create_sampler
 from ....statistics.function_selector import get_aggregation_function
+from ....debuggers.utils import get_debugger_by_name
 
 
 # pylint: disable=R0912
@@ -49,7 +50,7 @@ class MinMaxQuantization(Algorithm):
         """
         activation_statistics = self._stats_collector.get_statistics_for_algorithm(self.name)
 
-        debugger = self._get_debugger("MinMaxQuantizationDebugger", debuggers)
+        debugger = get_debugger_by_name("MinMaxQuantizationDebugger", debuggers)
         if debugger:
             debugger.original_stats = activation_statistics
 
@@ -65,6 +66,7 @@ class MinMaxQuantization(Algorithm):
                        model_name=model.name)
         if debugger:
             debugger.run(model, self._sampler)
+
         return model
 
     def register_statistics(self, model, stats_collector, debuggers=[]):
@@ -72,21 +74,17 @@ class MinMaxQuantization(Algorithm):
         fqut.insert_fake_quantize_nodes(self._config, model)
         activation_statistics_layout = self.__get_activations_statistics_layout(model)
 
-        debugger = self._get_debugger("MinMaxQuantizationDebugger", debuggers)
+        debugger = get_debugger_by_name("MinMaxQuantizationDebugger", debuggers)
         if debugger:
             fake_quantize_config = fqut.compute_stats_layouts(self._config, model)
             debugger.fake_quantize_config = fake_quantize_config
-            activation_statistics_layout = debugger._augment_stats_layout(activation_statistics_layout)
+            activation_statistics_layout = debugger._augment_stats_layout(
+                activation_statistics_layout, model
+            )
 
         layers_mapping = fqut.create_renamed_layers_mapping(model, activation_statistics_layout)
         stats_collector.register(self.name, activation_statistics_layout, self._sampler, layers_mapping)
         self._stats_collector = stats_collector
-
-    def _get_debugger(self, name, debuggers=[]):
-        for debugger in debuggers:
-            if debugger.name == name:
-                return debugger
-        return []
 
     def __get_activations_statistics_layout(self, model):
         """
