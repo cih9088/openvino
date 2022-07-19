@@ -558,16 +558,23 @@ def find_fqs_to_unify(model, config):
                     if _is_valid_unify(to_unify):
                         to_unify = [to_unify[0], [name for (name, _) in to_unify[1]]]
 
-                        for item in fqs_to_consecutive_unify:
-                            if item[0] == to_unify[0]:
-                                item[1] = list(set(item[1]).union(set(to_unify.pop(1))))
-                                break
-                            elif set(item[1]).intersection(set(to_unify[1])):
-                                item[1] = list(set(item[1]).union(set(to_unify.pop(1))))
-                                item[0] = list(set(item[0]).union(set(to_unify.pop(0))))
-                                break
-                        if len(to_unify) > 1:
+                        merge_indices = []
+                        for idx, item in enumerate(fqs_to_consecutive_unify):
+                            if set(item[0]).intersection(set(to_unify[0])) or set(item[1]).intersection(set(to_unify[1])):
+                                merge_indices.append(idx)
+
+                        if merge_indices:
+                            merge_indices = sorted(merge_indices, reverse=True)
+                            new_bridges = set(to_unify[0])
+                            new_fqs = set(to_unify[1])
+                            for idx in merge_indices:
+                                bridge, fqs = fqs_to_consecutive_unify.pop(idx)
+                                new_bridges = new_bridges.union(set(bridge))
+                                new_fqs = new_fqs.union(set(fqs))
+                            fqs_to_consecutive_unify.append([list(new_bridges), list(new_fqs)])
+                        else:
                             fqs_to_consecutive_unify.append(to_unify)
+
         # concat fqs to unify
         temp = []
         for consecutive_bridges, consecutive_fqs in fqs_to_consecutive_unify:
